@@ -1,6 +1,5 @@
 {
-  "rootDirectory": "apps/site",
-  "buildCommand": "npx turbo build",
+  "buildCommand": "cd apps/site && npx next build",
   "framework": "nextjs",
-  "outputDirectory": ".next"
+  "outputDirectory": "apps/site/.next"
 }
