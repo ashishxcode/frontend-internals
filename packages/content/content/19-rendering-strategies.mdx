@@ -184,7 +184,7 @@ User in Tokyo → Edge node in Tokyo → SSR → response
 User in London → Edge node in London → SSR → response
 ```
 
-**Benefits:** Lower latency (edge nodes are <50ms from users), automatic geo-distribution.
+**Benefits:** Lower latency (edge nodes are `{'<'}50ms` from users), automatic geo-distribution.
 
 **Limitations:** No Node.js APIs (no `fs`, no native modules), limited runtime (Vercel Edge uses V8 isolates, Cloudflare Workers use V8 isolates). Cold starts are fast, but execution time is limited (typically 30s).
 
