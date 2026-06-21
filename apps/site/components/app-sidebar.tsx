@@ -10,7 +10,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { chaptersByPart } from "@/lib/chapters";
+import { chaptersByPart } from "@frontend-internals/content";
 import { Search, Terminal } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";

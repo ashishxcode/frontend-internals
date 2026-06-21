@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm";
 import ChapterNav from "@/components/ChapterNav";
 import Mermaid from "@/components/Mermaid";
 import CodeBlock from "@/components/CodeBlock";
-import { getChapter, getAdjacent, chapters } from "@/lib/chapters";
+import { getChapter, getAdjacent, chapters, getContentDir } from "@frontend-internals/content";
 import { Children, isValidElement } from "react";
 
 type Props = { params: Promise<{ slug: string }> };
@@ -42,7 +42,7 @@ export default async function ChapterPage({ params }: Props) {
   const chapter = getChapter(slug);
   if (!chapter) notFound();
 
-  const mdxPath = join(process.cwd(), "content", `${slug}.mdx`);
+  const mdxPath = join(getContentDir(), `${slug}.mdx`);
   let raw: string;
   if (existsSync(mdxPath)) {
     raw = readFileSync(mdxPath, "utf-8");

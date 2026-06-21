@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import { type Chapter } from "@/lib/chapters";
+import { type Chapter } from "@frontend-internals/content";
 
 type Props = { prev?: Chapter; next?: Chapter };
 

@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { chapters } from "@/lib/chapters";
+import { chapters } from "@frontend-internals/content";
 import ThemeToggle from "@/components/ThemeToggle";
 
 export default function AppHeader() {

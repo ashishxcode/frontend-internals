@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Fuse from "fuse.js";
 import { Search, ArrowRight } from "lucide-react";
-import type { Chapter } from "@/lib/chapters";
+import type { Chapter } from "@frontend-internals/content";
 
 type SearchDialogProps = { chapters: Chapter[] };
 

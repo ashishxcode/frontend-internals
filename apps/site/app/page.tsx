@@ -1,4 +1,4 @@
-import { chaptersByPart } from "@/lib/chapters";
+import { chaptersByPart } from "@frontend-internals/content";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 

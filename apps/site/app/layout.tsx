@@ -5,7 +5,8 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import AppHeader from "@/components/AppHeader";
-import { chapters } from "@/lib/chapters";
+import { Analytics } from "@vercel/analytics/react";
+import { chapters } from "@frontend-internals/content";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -38,6 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </SidebarProvider>
           <SearchDialog chapters={chapters} />
           <BackToTop />
+          <Analytics />
         </ThemeProvider>
       </body>
     </html>

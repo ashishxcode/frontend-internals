@@ -1,6 +1,9 @@
 # dependencies
 node_modules/
 
+# turbo
+.turbo/
+
 # next.js
 .next/
 out/
