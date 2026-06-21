@@ -31,8 +31,8 @@ The core insight: **ARIA changes the tree, but not the behavior.** `role="button
 flowchart LR
   html["your HTML/ARIA"] --> tree["accessibility tree"]
   tree --> at["screen readers, keyboard, switch devices"]
-  sem["<button>"] -->|free role+keyboard| tree
-  div["<div onClick>"] -->|generic, no role| tree
+  sem["&lt;button&gt;"] -->|free role+keyboard| tree
+  div["&lt;div onClick&gt;"] -->|generic, no role| tree
 ```
 
 ## `<button>` vs `<div onClick>`

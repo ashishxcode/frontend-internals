@@ -75,7 +75,7 @@ A 40ms JS task blows the frame budget by 2x. The browser cannot paint. The frame
 sequenceDiagram
   participant Task as JS task
   participant RAF as requestAnimationFrame
-  participant Pipe as Layout->Paint->Composite
+  participant Pipe as "Layout->Paint->Composite"
   Task->>Task: run JS, drain microtasks
   Task->>RAF: rAF callbacks (before paint)
   RAF->>Pipe: browser renders the frame

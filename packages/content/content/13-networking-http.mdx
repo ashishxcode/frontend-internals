@@ -62,7 +62,7 @@ CORS is the browser enforcing same-origin policy — not server security. The se
 
 ```mermaid
 sequenceDiagram
-  participant B as Browser (app.com)
+  participant B as "Browser (app.com)"
   participant S as api.other.com
   B->>S: OPTIONS (preflight). Access-Control-Request-Method/Headers
   S-->>B: 200 + Access-Control-Allow-Origin: app.com

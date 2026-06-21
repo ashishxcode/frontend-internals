@@ -2,7 +2,7 @@
 title: "TypeScript Type System"
 chapter: "09"
 part: "TypeScript"
-description: "Generics, mapped types, conditional types, utility types"
+description: "Generics, mapped types, conditional types, template literal types, utility types"
 ---
 
 ## Why This Matters
@@ -145,6 +145,112 @@ Prefer `unknown` over `any` in almost all cases. `unknown` preserves safety — 
 
 `Array<number>` becomes `Array` in the output. Interfaces disappear. This means TypeScript types cannot protect you at runtime. For external data — API responses, user input, localStorage — use a runtime schema validator like zod at the boundary.
 
+## Mapped Types: Transforming Object Shapes
+
+Mapped types create new object types by iterating over existing keys — the type-level equivalent of `Object.keys().reduce()`.
+
+```ts
+type User = { name: string; age: number; email: string };
+
+type Partial<T>  = { [K in keyof T]?: T[K] };         // every key optional
+type Required<T> = { [K in keyof T]-?: T[K] };         // every key required
+type Pick<T, K extends keyof T> = { [P in K]: T[P] }; // keep only K
+type Record<K extends keyof any, T> = { [P in K]: T }; // map keys to type
+
+type Updatable = Partial<User>;           // all fields optional
+type Preview = Pick<User, "name" | "email">; // { name: string; email: string }
+type Map = Record<string, User>;          // { [key: string]: User }
+```
+
+Each mapped type is a small loop over keys — once you can read `[K in keyof T]`, you can write any of them from scratch.
+
+## Conditional Types: Branching at the Type Level
+
+Conditional types choose between two types based on a condition, the same way `x ? a : b` works at runtime:
+
+```ts
+type IsString<T> = T extends string ? "yes" : "no";
+
+type A = IsString<"hello">;  // "yes"
+type B = IsString<42>;       // "no"
+```
+
+The `infer` keyword captures a nested type from a pattern — think of it as destructuring for types:
+
+```ts
+type ReturnOf<F> = F extends (...args: any[]) => infer R ? R : never;
+type X = ReturnOf<() => string>;  // string
+```
+
+`Exclude` and `Extract` are built on this pattern — they filter union members using conditional types under the hood.
+
+## Template Literal Types: Types That Know Strings
+
+Template literal types build string patterns at the type level — useful for event naming, route parameters, and prop conventions:
+
+```ts
+type Event = "click" | "hover" | "focus";
+type Handler = `on${Capitalize<Event>}`;  // "onClick" | "onHover" | "onFocus"
+
+type CSSProp = `--${string}`;            // any CSS custom property
+```
+
+They work with built-in utilities like `Capitalize`, `Uppercase`, and `Lowercase` to transform string cases, making them great for API conventions and naming patterns.
+
+## never vs unknown: When Each Makes Sense
+
+`never` is the empty set — nothing inhabits it. Use it when code paths can't reach a value:
+
+```ts
+function throwError(msg: string): never { throw new Error(msg); }
+
+type AllStrings = string[];
+type Result = AllStrings extends string[] ? "yes" : "no";  // "yes"
+```
+
+`unknown` is the top type — everything is assignable to it. Use it when you receive external data and haven't narrowed yet:
+
+```ts
+function parse(input: unknown): string {
+  if (typeof input === "string") return input;
+  if (typeof input === "number") return String(input);
+  return "unknown";
+}
+```
+
+`never` marks impossible branches. `unknown` marks "I don't know yet, but I'll figure it out."
+
+## Type Assertions vs Guards: Telling vs Proving
+
+`as` is a lie — you assert the compiler should believe you. Type guards actually prove the type at runtime:
+
+```ts
+function process(x: string | number) {
+  if (typeof x === "string") return x.toUpperCase();  // guard: compiler narrows
+  if (typeof x === "number") return x.toFixed(2);     // guard: compiler narrows
+}
+
+function unsafe(x: unknown) {
+  const s = x as string;  // assertion: compiler trusts you, no runtime check
+  return s.toUpperCase();  // blows up at runtime if x isn't a string
+}
+```
+
+Discriminated unions are the most reliable guard — checking a literal field narrows automatically:
+
+```ts
+type Shape =
+  | { kind: "circle"; radius: number }
+  | { kind: "rect"; width: number; height: number };
+
+function area(s: Shape) {
+  if (s.kind === "circle") return Math.PI * s.radius ** 2;
+  return s.width * s.height;
+}
+```
+
+Prefer `typeof`, `instanceof`, and discriminated unions. Reserve `as` for when you genuinely know more than the compiler.
+
 ## Q&A
 
 **1. Why is `any` bad but `unknown` fine?**
@@ -163,6 +269,14 @@ It binds a type variable inside a type-level pattern match. TypeScript tries to 
 
 TypeScript is a compile-time overlay on JavaScript. It checks your code, then strips all type annotations and outputs plain JavaScript. This means you can't do `if (typeof x === 'Contact')` at runtime — types don't exist there.
 
+**5. When should I use `as` assertions vs type guards?**
+
+Almost never use `as`. Type guards (`typeof`, `instanceof`, discriminated unions) prove the type to the compiler and catch bugs. Assertions just tell the compiler "trust me" — they blow up at runtime if you're wrong. Use `as` only when you know something the compiler can't see.
+
+**6. What's the difference between `never` and `unknown`?**
+
+`never` is the empty set — no value has this type. Use it for exhaustive checks and functions that always throw. `unknown` is the top set — every value fits, but you must narrow before using it. One marks impossible code; the other marks "I don't know yet."
+
 ## Mental Trigger
 
-**Types are sets. Assignability is the subset question. Generics are type-level functions.**
+**Types are sets. Assignability is the subset question. Generics are type-level functions. Mapped types iterate keys. Conditional types branch on extends.**

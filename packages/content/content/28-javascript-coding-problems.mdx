@@ -215,6 +215,21 @@ function promiseAllSettled(iterable) {
 }
 ```
 
+**Flatten Array** — recursion + type checking:
+```javascript
+function flatten(arr, depth = Infinity) {
+  return arr.reduce((acc, item) => {
+    if (Array.isArray(item) && depth > 0) {
+      acc.push(...flatten(item, depth - 1));
+    } else {
+      acc.push(item);
+    }
+    return acc;
+  }, []);
+}
+```
+Recursively spreads each sub-array until hitting a non-array or hitting the depth limit. The `depth` parameter lets you control how many levels deep to go — `flatten([1, [2, [3]]], 1)` stops one level deep.
+
 ## Tradeoffs
 
 - **Debounce vs throttle.** Debounce waits for a pause. Throttle fires at most once per interval.
@@ -243,6 +258,15 @@ Use a chain of Maps, one per argument position. Each argument's Map stores the n
 
 **Q4: How does an async generator differ from an array of promises?**
 Array of promises executes all immediately, stores all in memory. Async generator yields one at a time — lazy evaluation. For infinite sequences or memory-constrained scenarios, use async generators.
+
+**Q5: How would you flatten an array without recursion to avoid stack overflow?**
+Use an explicit stack. Push items onto the stack, and when you pop an array, push its children back. Iterative approach handles arrays with 100k+ nesting levels without blowing the call stack.
+
+**Q6: Your curry implementation uses `fn.length` to detect arity. What if the function uses default parameters?**
+`fn.length` stops counting at the first parameter with a default value. So `function(a, b = 2)` has `length` of 1. Fix: track argument count manually, or let the caller explicitly pass the arity.
+
+**Q7: How would you add wildcard support to your EventEmitter (`on('user.*', handler)`)?**
+Store patterns in a separate list. On `emit`, iterate both exact matches and pattern matches. For `user.*`, split the event name on `.` and check if the pattern's segments match — first segment equals, second is `*`. Keep it simple: no regex, just segment-level comparison.
 
 ## Mental Trigger
 

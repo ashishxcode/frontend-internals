@@ -152,6 +152,151 @@ Use renderHook for pure logic hooks (reducers, transformers). Test through a com
 
 Don't snapshot entire component trees. Snapshot tests assert structure, not behavior. If a snapshot breaks on every CSS change, it's testing the wrong thing. Use targeted assertions on specific elements and text instead.
 
+## Mocking Patterns
+
+Different mocking strategies for different test goals.
+
+```jsx
+// jest.fn() — spy on calls without replacing
+const mockFn = jest.fn();
+mockFn("hello");
+expect(mockFn).toHaveBeenCalledWith("hello");
+
+// jest.mock() — replace entire module
+jest.mock("./api", () => ({
+  fetchUser: jest.fn().mockResolvedValue({ name: "Ada" }),
+}));
+
+// Partial mock — keep real behavior, mock specific methods
+jest.mock("./api", () => ({
+  ...jest.requireActual("./api"),
+  fetchUser: jest.fn().mockResolvedValue({ name: "Ada" }),
+}));
+```
+
+Use `jest.fn()` for spying, `jest.mock()` for replacing, and partial mocking when you need most of a module's real behavior but want to stub one method.
+
+## MSW (Mock Service Worker)
+
+Set up MSW at the test boundary to intercept network requests without touching your code.
+
+```jsx
+import { setupServer } from "msw/node";
+import { http, HttpResponse } from "msw";
+
+const server = setupServer(
+  http.get("/api/user", () => HttpResponse.json({ name: "Ada" })),
+  http.post("/api/login", async ({ request }) => {
+    const body = await request.json();
+    if (body.password === "secret") {
+      return HttpResponse.json({ token: "abc" });
+    }
+    return HttpResponse.json({ error: "Invalid" }, { status: 401 });
+  })
+);
+
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+```
+
+MSW runs at the network layer so your real fetch, URL construction, and response parsing all execute — only the response is mocked.
+
+## RTL Query Priority
+
+Queries follow a hierarchy that mirrors how users perceive and interact with elements.
+
+```jsx
+// Role — accessible semantics (buttons, headings, landmarks)
+screen.getByRole("button", { name: /submit/i });
+screen.getByRole("heading", { name: /profile/i });
+
+// Label — form input associations
+screen.getByLabelText(/email/i);
+screen.getByPlaceholderText(/search/i);
+
+// Text — visible content (status, errors, paragraphs)
+screen.getByText(/loading/i);
+screen.getByText(/error occurred/i);
+
+// Test ID — last resort, no UX contract tested
+screen.getByTestId("user-avatar");
+```
+
+Each query tests a different contract: role tests accessibility, label tests form semantics, text tests content, and testId tests nothing about the user experience.
+
+## Testing Error Boundaries
+
+Render a throwing component inside the boundary and assert the fallback UI appears.
+
+```jsx
+function ThrowingComponent() {
+  throw new Error("Boom!");
+}
+
+test("shows fallback UI on error", () => {
+  const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+  render(
+    <ErrorBoundary fallback={<p>Something broke</p>}>
+      <ThrowingComponent />
+    </ErrorBoundary>
+  );
+  expect(screen.getByText("Something broke")).toBeInTheDocument();
+  expect(screen.queryByText("ThrowingComponent")).not.toBeInTheDocument();
+  spy.mockRestore();
+});
+```
+
+The spy suppresses React's expected error output, and the negative assertion confirms the broken component is no longer in the tree.
+
+## Testing Forms
+
+Walk through the user flow: fill inputs, trigger validation, submit, and verify outcomes.
+
+```jsx
+test("validates required fields", async () => {
+  render(<ContactForm />);
+
+  // Submit empty — should show errors
+  await userEvent.click(screen.getByRole("button", { name: /send/i }));
+  expect(screen.getByText(/name is required/i)).toBeInTheDocument();
+
+  // Fill and submit — errors should clear
+  await userEvent.type(screen.getByLabelText(/name/i), "Ada");
+  await userEvent.type(screen.getByLabelText(/email/i), "ada@example.com");
+  await userEvent.click(screen.getByRole("button", { name: /send/i }));
+  expect(screen.queryByText(/required/i)).not.toBeInTheDocument();
+});
+```
+
+Test each validation path independently: empty submit for required errors, invalid format for type errors, and valid data for success.
+
+## Q&A
+
+**1. Why test behavior instead of implementation?**
+
+Implementation tests break on refactors that don't change behavior. Renaming a state variable or swapping a CSS class shouldn't break a test. Behavior tests survive refactors because they assert what the user sees and does.
+
+**2. Why mock with MSW instead of jest.mock?**
+
+MSW tests the full code path: component → hook → fetch → response handling. jest.mock replaces the entire function, skipping steps. If the API response shape changes, the mock still returns the old shape — test passes, production breaks.
+
+**3. When should I use renderHook vs testing through a component?**
+
+Use renderHook for pure logic hooks (reducers, transformers). Test through a component when the hook orchestrates side effects (fetching, subscriptions). The component is the real consumer boundary.
+
+**4. How do I avoid brittle snapshot tests?**
+
+Don't snapshot entire component trees. Snapshot tests assert structure, not behavior. If a snapshot breaks on every CSS change, it's testing the wrong thing. Use targeted assertions on specific elements and text instead.
+
+**5. When should I mock a module vs use MSW?**
+
+Mock the module when you're testing code that calls it directly (unit tests for a service layer). Use MSW when you're testing components that fetch data through the network stack (integration tests). MSW catches shape mismatches between your mock and real API.
+
+**6. How do I test a form with multiple validation steps?**
+
+Test each path independently: fill nothing and submit for required errors, fill invalid email for format errors, fill valid data for success. Use `userEvent.tab()` to trigger blur validation, `userEvent.type()` for real-time validation, and click for submit validation.
+
 ## Mental Trigger
 
 **Test what the user sees and does. Mock boundaries you don't own.**

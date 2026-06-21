@@ -38,7 +38,7 @@ The hole: `dangerouslySetInnerHTML` or `innerHTML`. These tell the browser "trus
 
 ```mermaid
 sequenceDiagram
-  participant V as Victim (logged into bank.com)
+  participant V as "Victim (logged into bank.com)"
   participant E as evil.com
   participant Bk as bank.com
   E->>Bk: hidden form auto-submits POST /transfer
@@ -62,13 +62,121 @@ Start with `Content-Security-Policy-Report-Only` to discover violations before e
 
 ## Token Storage
 
-| Storage | XSS Risk | CSRF Risk |
-|---|---|---|
-| localStorage | High — XSS reads it | Low — browser won't auto-send |
-| HttpOnly cookie | Low — JS can't access it | Medium — browser auto-attaches |
-| In-memory variable | Medium — XSS can read it | Low — not auto-attached |
+Where you store auth tokens determines your attack surface. Each option trades XSS risk against CSRF risk.
 
-Best practice: refresh token in `HttpOnly + Secure + SameSite` cookie (long-lived, never exposed to JS). Short-lived access token in memory (5-15 minutes). Strong XSS defenses (CSP, output escaping) as primary protection. SameSite + anti-CSRF tokens for remaining CSRF surface. There's no perfect location — the tradeoff is which threat you prioritize.
+| Storage | XSS Risk | CSRF Risk | Persistence | Use Case |
+|---|---|---|---|---|
+| localStorage | High — any XSS reads it | Low — browser won't auto-send | Survives tabs/reloads | Not recommended for tokens |
+| sessionStorage | High — same XSS exposure | Low — not sent cross-origin | Single tab only | Temporary form state, not auth |
+| HttpOnly cookie | Low — JS can't access it | Medium — browser auto-attaches | Survives tabs/reloads | Refresh tokens, session tokens |
+| In-memory variable | Medium — XSS reads it | Low — not auto-attached | Lost on page reload | Short-lived access tokens |
+
+**The tradeoff:** There's no perfect location. HttpOnly cookies protect against XSS (JS can't read them) but auto-attach to requests (CSRF risk). In-memory variables protect against CSRF (not auto-attached) but XSS can still read them. localStorage persists but exposes tokens to any XSS vector.
+
+**Best practice:** Refresh token in `HttpOnly + Secure + SameSite` cookie (long-lived, never exposed to JS). Short-lived access token in memory (5-15 minutes). Strong XSS defenses (CSP, output escaping) as primary protection. SameSite + anti-CSRF tokens for remaining CSRF surface. Rotate refresh tokens on every use and revoke on logout.
+
+## CSP: Content Security Policy
+
+CSP tells the browser which resources (scripts, styles, images, fonts) are allowed to load. It's your last line of defense when escaping fails or third-party code misbehaves.
+
+**What it prevents:** Inline script injection, loading scripts from untrusted origins, eval() abuse, clickjacking via frame restrictions, and data exfiltration to attacker-controlled servers.
+
+**Common directives:**
+
+| Directive | Controls | Example |
+|---|---|---|
+| `script-src` | Where scripts can load from | `'self' https://trusted-cdn.com` |
+| `style-src` | Where styles can load from | `'self' 'unsafe-inline'` |
+| `img-src` | Where images can load from | `'self' data: https:` |
+| `connect-src` | Where fetch/XHR/WebSocket can connect | `'self' https://api.yourapp.com` |
+| `frame-ancestors` | Who can embed your page in an iframe | `'none'` |
+| `base-uri` | What URLs `<base>` can set | `'self'` |
+
+**Setup example:**
+
+```
+Content-Security-Policy: script-src 'self' 'nonce-abc123'; style-src 'self'; default-src 'self'; frame-ancestors 'none'; base-uri 'self'
+```
+
+Nonces and hashes let you whitelist specific inline scripts without allowing all inline code. Start with `Content-Security-Policy-Report-Only` to discover violations before enforcing — this prevents breaking legitimate third-party scripts on day one.
+
+**Why it matters:** CSP is defense-in-depth. Even if an attacker injects `<script>` via an unsanitized field, CSP blocks it from executing *and* from phoning home.
+
+## OAuth 2.0 Flow: Authorization Code with PKCE
+
+OAuth 2.0 lets your app access user data from another service (Google, GitHub) without handling passwords. The Authorization Code flow with PKCE is the standard for SPAs and mobile apps.
+
+**Simplified flow:**
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant A as Your App
+  participant AS as Auth Server
+  participant RS as Resource Server
+  A->>U: Redirect to auth server
+  U->>AS: Log in, grant consent
+  AS->>A: Redirect with authorization code
+  A->>AS: Exchange code + code_verifier for tokens
+  AS->>A: Access token + refresh token
+  A->>RS: API call with access token
+  RS->>A: Protected data
+```
+
+**Why PKCE matters:** Without PKCE, a malicious app could intercept the authorization code. PKCE adds a `code_verifier` (random string) your app generates, hashes as `code_verifier_challenge` sent in the initial request, and sends the original `code_verifier` when exchanging the code. The auth server verifies the hash matches. Only the app that started the flow can complete it.
+
+**Key principles:**
+- Never store tokens in localStorage — use HttpOnly cookies or in-memory
+- Always use PKCE for SPAs — implicit flow is deprecated
+- Rotate refresh tokens and revoke on logout
+- Validate tokens server-side, never trust client-side checks
+
+## XSS Prevention: Defense-in-Depth
+
+React's default escaping handles most cases, but XSS requires layered defenses.
+
+**DOMPurify:** Sanitizes HTML before rendering. Use when you must render rich content (user comments, markdown output). It parses HTML and strips dangerous elements — script tags, event handlers, iframe, etc.
+
+```jsx
+import DOMPurify from 'dompurify';
+const clean = DOMPurify.sanitize(userContent);
+<div dangerouslySetInnerHTML={{ __html: clean }} />
+```
+
+**React's built-in protections:**
+- JSX escapes values by default — `{userInput}` becomes text, not HTML
+- No event handler injection via string attributes
+- `dangerouslySetInnerHTML` is the only way to bypass escaping — use sparingly
+
+**Manual escaping (for non-React contexts):**
+
+```javascript
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+```
+
+**Why it matters:** XSS is the most common web vulnerability. Defense-in-depth means even if one layer fails (someone uses `innerHTML`), others catch it (CSP blocks execution, DOMPurify strips dangerous markup).
+
+## CSRF Prevention: Beyond SameSite
+
+SameSite cookies handle most CSRF, but state-changing operations need additional protection.
+
+**SameSite cookie attributes:**
+
+| Value | Behavior | CSRF Protection |
+|---|---|---|
+| `Strict` | Never send on cross-origin requests | Maximum — but breaks legitimate cross-site links |
+| `Lax` | Send only on top-level GET navigations | Good default — blocks cross-site POSTs |
+| `None` | Send on all requests (requires `Secure`) | None — only for intentional cross-origin APIs |
+
+**CSRF tokens:** Server generates a random token, includes it in a hidden form field or custom header. Server validates it on state-changing requests. Attackers can't guess the token and can't read it from SameSite-protected cookies.
+
+**Double-submit cookie pattern:** Server sets a random token in both a cookie and a custom header. On state-changing requests, client sends both. Server verifies they match. Attackers can trigger requests but can't read the cookie value to include in the header.
+
+**Why it matters:** SameSite alone doesn't protect against subdomain attacks or legacy clients. CSRF tokens add server-side validation that attackers can't bypass without compromising the token itself.
 
 ## Q&A
 
@@ -87,6 +195,14 @@ Output escaping handles known injection points. CSP catches what escaping misses
 **4. Why is `rel=noopener` needed on `target=_blank`?**
 
 When a link opens in a new tab with `target="_blank"`, the new page gets a reference to the original via `window.opener`. The opened page can redirect the original — reverse tabnabbing. `rel="noopener"` sets `window.opener` to null. Modern browsers set this by default, but explicit is still best practice.
+
+**5. Why should I use PKCE for SPAs instead of implicit flow?**
+
+The implicit flow returns tokens directly in the URL fragment, which can leak via browser history, referrer headers, or logs. PKCE keeps the authorization code exchange server-side, even in SPAs. The `code_verifier` prevents authorization code interception attacks. OAuth 2.1 deprecates implicit flow entirely.
+
+**6. What's the difference between CSRF tokens and double-submit cookies?**
+
+CSRF tokens are embedded in forms or custom headers and validated server-side against a session store. Double-submit cookies rely on the browser's SameSite policy — the token is in both a cookie and a header, and the server verifies they match. Double-submit is stateless (no server-side session needed) but slightly less secure against sophisticated attacks. Use CSRF tokens for banking/financial operations; double-submit works fine for most web apps.
 
 ## Mental Trigger
 

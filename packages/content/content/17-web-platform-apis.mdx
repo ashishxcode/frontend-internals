@@ -22,7 +22,7 @@ The core insight: **the browser is a better event tracker than you are.**
 ```mermaid
 sequenceDiagram
   participant U as User scrolls
-  participant B as Browser (off-main-thread)
+  participant B as "Browser (off-main-thread)"
   participant CB as Your callback
   U->>B: scrolls toward bottom
   B->>B: tracks sentinel vs viewport
