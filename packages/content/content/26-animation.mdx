@@ -25,6 +25,64 @@ flowchart LR
   animate -->|transform/opacity| comp["Composite only (GPU) = smooth"]
 ```
 
+## CSS Animation Basics
+
+### Transitions — State Changes
+
+```css
+.button {
+  background: blue;
+  transition: background 200ms ease, transform 150ms ease;
+}
+.button:hover {
+  background: darkblue;
+  transform: scale(1.05);
+}
+```
+
+`transition` defines what properties animate, how long, and the easing. When the property changes (hover, class toggle), the browser interpolates smoothly.
+
+### Keyframe Animations — Continuous Motion
+
+```css
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.8; }
+}
+
+.loading { animation: pulse 1.5s ease-in-out infinite; }
+```
+
+`@keyframes` defines the animation stages. `animation` applies it with duration, timing, iteration count.
+
+### Timing Functions
+
+| Function | Behavior | Use case |
+|---|---|---|
+| `ease` | Slow start, fast middle, slow end | Default, natural feel |
+| `linear` | Constant speed | Progress bars, rotations |
+| `ease-in` | Slow start, fast end | Elements exiting |
+| `ease-out` | Fast start, slow end | Elements entering |
+| `ease-in-out` | Slow start and end | Smooth transitions |
+| `cubic-bezier(x1, y1, x2, y2)` | Custom curve | Exact control |
+
+### Spring Physics (Framer Motion)
+
+Springs feel more natural than easing curves because they model real physics:
+
+```jsx
+<motion.div
+  animate={{ x: 200 }}
+  transition={{ type: "spring", stiffness: 300, damping: 20 }}
+/>
+```
+
+- **Stiffness:** How rigid the spring is. Higher = faster, snappier.
+- **Damping:** How much friction. Higher = less bounce.
+- **Mass:** How heavy the object. Higher = slower, more momentum.
+
+Springs automatically adjust duration based on distance — short moves are fast, long moves are slow. Easing curves have fixed duration regardless of distance.
+
 ## The Two Scenarios
 
 **The expensive way:**

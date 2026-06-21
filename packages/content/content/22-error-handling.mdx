@@ -138,6 +138,106 @@ Caught: render errors, lifecycle errors, constructor errors. Not caught: event h
 **Q: Where do you place boundaries?**
 Around independent subtrees that should fail independently — each widget gets its own boundary. Route-level boundaries catch route failures. Do not wrap shared infrastructure (nav, layout). One top-level boundary only means any error blanks everything.
 
+## Interview Deep-Dive: Production Incident Response
+
+This pattern comes from a real interview where the candidate was asked: "Something is broken in production after a release. What do you do?"
+
+### The Scenario
+
+You're responsible for a release. After deploying to production, you get an alert: something is broken. Pages aren't rendering correctly, or features aren't working as expected.
+
+### Q: What are your first actions?
+
+**Step 1: Check error tracking (Sentry/Datadog).**
+
+If error boundaries are in place, the error should be captured with:
+- Stack trace
+- Component tree
+- User info (browser, OS, session)
+- Release version
+
+This narrows the problem immediately. "The error is in `ContactTable` component, thrown during render, affecting Chrome users on release v2.3.1."
+
+**Step 2: Reproduce locally.**
+
+Pull the release branch. Set up the same environment (same data, same user permissions). Try to trigger the same error. If you can reproduce, you can debug.
+
+**Step 3: Mitigate first, fix second.**
+
+Don't spend 2 hours debugging while users are still hitting the bug. Options:
+- **Rollback** to the previous release (fastest)
+- **Feature flag** to disable the broken feature
+- **Error boundary** fallback to show a degraded but working UI
+
+**Step 4: Fix and guard.**
+
+Once mitigated, find the root cause. Fix it. Add an Error Boundary around the risky component. Write a test that would have caught the bug.
+
+**Step 5: Postmortem.**
+
+Why did CI and code review miss this? Add the missing check (test, lint rule, type guard) so it can't happen again.
+
+### The Mental Model
+
+```
+Alert fires
+  ↓
+Check Sentry (what error, where, who affected)
+  ↓
+Reproduce locally (confirm root cause)
+  ↓
+Mitigate (rollback / feature flag / boundary)
+  ↓
+Fix + guard (code fix + test + boundary)
+  ↓
+Postmortem (prevent recurrence)
+```
+
+### Common Mistakes in Incident Response
+
+1. **Debugging before mitigating.** Users keep hitting the bug while you investigate.
+2. **No error boundaries.** Without boundaries, one error blanks the entire app.
+3. **No fallback design.** A white screen is worse than a "Something went wrong" message with a retry button.
+4. **No Sentry/error tracking.** You're debugging blind — no stack trace, no context.
+5. **Skipping postmortem.** The same bug ships again next week.
+
+### Q: How do error boundaries help in production?
+
+Error boundaries degrade gracefully. Instead of the entire app crashing:
+
+```jsx
+<ErrorBoundary fallback={<ContactTableError />}>
+  <ContactTable />
+</ErrorBoundary>
+```
+
+The rest of the app (navigation, sidebar, other widgets) stays functional. Only the broken component shows a fallback. This is the "watertight compartments" pattern — one room floods, but the ship stays afloat.
+
+### Q: How do you set up error tracking?
+
+```js
+// Sentry initialization
+import * as Sentry from "@sentry/react";
+
+Sentry.init({
+  dsn: "https://...",
+  release: process.env.REACT_APP_VERSION,
+  integrations: [
+    Sentry.browserTracingIntegration(),
+    Sentry.replayIntegration({ maskAllText: true }),
+  ],
+  tracesSampleRate: 0.1,     // 10% of transactions
+  replaysSessionSampleRate: 0.1,
+  replaysOnErrorSampleRate: 1.0, // 100% of error sessions
+});
+```
+
+Key configurations:
+- **Release tracking:** Tag errors with the deployment version. Filter by version in Sentry.
+- **Source maps:** Upload source maps to Sentry so stack traces show original code, not minified.
+- **User context:** `Sentry.setUser({ id, email })` — helps identify affected users.
+- **Breadcrumbs:** Automatic breadcrumbs for navigation, API calls, console logs.
+
 ## Mental Trigger
 
 **Error is a state. Catch it at a boundary. Render a fallback.**

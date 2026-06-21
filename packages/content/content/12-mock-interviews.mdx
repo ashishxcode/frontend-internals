@@ -81,6 +81,121 @@ The trap is testing judgment, not knowledge. Never answer "yes" or "no" to a que
 - **Forgetting a11y and perf until prompted.** Bring them up unprompted.
 - **Rambling project pitch.** Keep STAR stories under 2 minutes and scoped to the job description. Spend 70% of prep time on coding, 30% on stories.
 
+## Worked Example: Autocomplete (45 minutes)
+
+```text
+Minute 0-2: Clarify
+  "Is this remote search (API) or local filter?"
+  "How many results max? 10? 100?"
+  "Keyboard navigation needed?"
+  "What happens when no results?"
+
+Minute 2-5: Shape state
+  query: string (local input)
+  debouncedQuery: string (custom hook, 300ms)
+  results: Item[] (from API)
+  status: "idle" | "loading" | "error" | "selectedIndex"
+
+Minute 5-15: Happy path
+  Input → onChange → setQuery
+  useEffect([debouncedQuery]) → fetch → setResults
+  Render list below input
+
+Minute 15-25: Four states
+  Loading: skeleton rows
+  Empty: "No results found"
+  Error: "Something went wrong" + retry button
+  Data: list of results
+
+Minute 25-35: Edges
+  AbortController → cancel stale requests
+  Keyboard: ArrowUp/Down moves selectedIndex, Enter selects, Escape closes
+  Click-outside → close dropdown
+  ARIA: role="combobox", aria-expanded, role="listbox", role="option"
+  Highlight matching text in each result
+
+Minute 35-40: Performance
+  Memoize result rows if needed
+  Debounce hook extracted for reuse
+
+Minute 40-45: Say what you'd add
+  "I'd add unit tests for the debounce hook"
+  "Integration test for keyboard navigation"
+  "Screen reader testing with VoiceOver"
+```
+
+## Worked Example: Infinite Scroll Table (System Design)
+
+```text
+Minute 0-3: Clarify
+  "How many total records?" → 500K
+  "Columns?" → 7-8 (name, email, status, etc.)
+  "Real-time updates?" → Yes, email status
+  "Bulk actions?" → Yes, multi-select
+
+Minute 3-8: Architecture
+  Data Layer: TanStack Query + useInfiniteQuery
+  Virtualization: react-virtual
+  Real-time: WebSocket → patch via setQueryData
+  Selection: selectAll/positiveIds/negativeIds model
+
+Minute 8-15: Data layer
+  Cursor-based pagination API
+  useInfiniteQuery for page fetching
+  IntersectionObserver to trigger next page
+  Cache with staleTime
+
+Minute 15-22: Virtualization
+  Fixed row height (say 48px)
+  Container height = totalRows × 48
+  Render visibleCount + overscan rows
+  Position with transform: translateY
+
+Minute 22-30: Real-time + selection
+  WebSocket events → update data layer
+  Only visible rows listen to events
+  Multi-select: selectAll + positiveIds + negativeIds
+  "Select all" sends strategy to API, not 500K IDs
+
+Minute 30-38: Edge cases
+  Deletion mid-scroll → "3 items deleted, click to refresh"
+  Scroll position preservation
+  Empty state after filtering
+  Error state for failed pages
+
+Minute 38-45: Tradeoffs
+  Pagination vs infinite scroll (discuss tradeoffs)
+  Virtualization disadvantages (Ctrl-F, a11y, variable heights)
+  Why transform over position:absolute
+```
+
+## Time Management
+
+45 minutes is tight. Here's how to allocate:
+
+| Phase | Time | What you do |
+|---|---|---|
+| Clarify | 0-3 min | Ask questions, state assumptions |
+| Shape state | 3-5 min | Define data model and status |
+| Happy path | 5-15 min | Core functionality working |
+| Four states | 15-25 min | Loading, empty, error, data |
+| Edges | 25-35 min | Debounce, keyboard, a11y, AbortController |
+| Perf pass | 35-40 min | Keys, memo, virtualization if needed |
+| Say what you'd add | 40-45 min | Tests, monitoring, scaling plan |
+
+**The critical rule:** If you're past 15 minutes and haven't rendered any UI, you're over-engineering. Get something visible first, then refine.
+
+## How to Handle "I Don't Know"
+
+The worst answer is silence. The second worst is guessing. The best answer:
+
+1. **Acknowledge the gap:** "I haven't used that specific API, but..."
+2. **Show reasoning:** "My understanding is that it works similarly to X, which..."
+3. **Ask for direction:** "Could you point me in the right direction?"
+4. **Propose a fallback:** "If I were implementing this in production, I'd look up the docs, but based on first principles..."
+
+This scores points for honesty, reasoning ability, and learning agility — all things senior engineers need.
+
 ## Q&A
 
 **1. How do I narrate without slowing down?**

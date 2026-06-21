@@ -161,6 +161,37 @@ State mapping (this.state → useState), lifecycle mapping (componentDidMount �
 **Q4: Design a verification workflow for AI-generated code.**
 Five gates: TypeScript (`tsc --noEmit`), lint + format, tests (unit + E2E), manual review (conventions, edge cases, accessibility), smoke test (run the app locally).
 
+## Interview Insight: "Delegate Execution, Not Thinking"
+
+This is a key insight from a senior frontend interview. When asked "how do you use AI tools?", the candidate's answer stood out:
+
+> "I've given the developer responsibility to Claude Code, but I've kept the engineering responsibility to myself. I decide what to change, what to do, what should be updated — but the code is written by Claude. And I verify as an engineer that what Claude generated is correct."
+
+This is the correct mental model for senior engineers using AI:
+
+```
+You: Engineering responsibility (decisions, architecture, quality)
+  ↓
+AI: Developer responsibility (implementation, boilerplate, variations)
+  ↓
+You: Review + verify ( correctness, edge cases, patterns)
+```
+
+### The Danger Zone
+
+The real danger isn't AI writing bad code — it's engineers **stopping their own thinking** and accepting AI output without verification. As one interviewer noted:
+
+> "If you delegate your thinking to LLMs, soon enough you'll start accepting whatever AI generates, instead of verifying it."
+
+### The Right Approach
+
+1. **You decide WHAT to build** (architecture, data flow, types)
+2. **You decide HOW to build it** (patterns, conventions, tradeoffs)
+3. **AI generates the code** (implementation, boilerplate)
+4. **You verify everything** (edge cases, accessibility, performance, security)
+
+The AI accelerates implementation. It doesn't replace engineering judgment.
+
 ## Mental Trigger
 
 You own every line. AI writes the first draft. You review and approve.

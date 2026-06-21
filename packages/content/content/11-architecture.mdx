@@ -99,6 +99,142 @@ Type folders (`components/`, `hooks/`, `utils/`) scatter a feature change across
 
 Feature folders win for blast radius containment. Type folders only work at very small scale when the whole app fits in your head. At scale, containment beats discoverability every time.
 
+## Component Composition Patterns
+
+These patterns answer: *how do you share behavior between components without creating tight coupling?*
+
+### Compound Components
+
+Share implicit state between related components via Context. The parent manages state, children consume it without explicit props:
+
+```jsx
+// Usage: implicit state sharing
+<Tabs>
+  <Tabs.List>
+    <Tabs.Tab>Profile</Tabs.Tab>
+    <Tabs.Tab>Settings</Tabs.Tab>
+  </Tabs.List>
+  <Tabs.Panel>...</Tabs.Panel>
+  <Tabs.Panel>...</Tabs.Panel>
+</Tabs>
+```
+
+```jsx
+// Implementation: Context + cloneElement or Provider
+const TabsContext = createContext();
+
+function Tabs({ children, defaultValue }) {
+  const [activeTab, setActiveTab] = useState(defaultValue);
+  return (
+    <TabsContext.Provider value={{ activeTab, setActiveTab }}>
+      {children}
+    </TabsContext.Provider>
+  );
+}
+
+Tabs.List = function TabsList({ children }) {
+  return <div role="tablist">{children}</div>;
+};
+
+Tabs.Tab = function TabsTab({ value, children }) {
+  const { activeTab, setActiveTab } = useContext(TabsContext);
+  return (
+    <button
+      role="tab"
+      aria-selected={activeTab === value}
+      onClick={() => setActiveTab(value)}
+    >
+      {children}
+    </button>
+  );
+};
+```
+
+**When to use:** Building component libraries, design systems, or any API where the consumer shouldn't need to manage internal state manually.
+
+### Render Props
+
+Pass a function as a child or prop. The function receives internal state and returns JSX. The consumer controls rendering:
+
+```jsx
+<DataList
+  renderEmpty={() => <p>No results found</p>}
+  renderItem={(item) => <ContactRow contact={item} />}
+/>
+```
+
+**When to use:** When you need to expose internal state for rendering but the component shouldn't decide the UI. Mostly replaced by custom hooks, but still useful for headless component libraries (Downshift, React Table).
+
+### Custom Hooks — The Modern Default
+
+For most shared behavior, extract into a custom hook. The hook manages state and effects; the consumer controls rendering:
+
+```jsx
+function useDebounce(value, delay) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return debounced;
+}
+
+// Consumer controls rendering
+function SearchInput() {
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebounce(query, 300);
+  // ...
+}
+```
+
+**When to use:** Default choice for shared stateful logic. Simpler than render props, more flexible than HOCs.
+
+### The Decision Tree
+
+```
+Need to share stateful logic between components?
+  ├─ Yes → Custom hook (default)
+  ├─ Building a component library? → Compound components
+  └─ Need to expose state for rendering? → Render props (rare, mostly replaced by hooks)
+```
+
+## Error Boundaries — The Safety Net
+
+React calls your component functions inside its own work loop. A try/catch around JSX doesn't catch render errors. Error Boundaries are the only way to catch errors during render:
+
+```jsx
+<ErrorBoundary fallback={<SomethingWentWrong />}>
+  <ContactsTable />
+</ErrorBoundary>
+```
+
+**Why this matters for architecture:** Without error boundaries, one broken component crashes the entire app. With them, failures are contained. Each widget, each route, each feature subtree can fail independently.
+
+**Placement strategy:**
+- **Route-level:** Each page gets its own boundary. A broken settings page doesn't crash the dashboard.
+- **Widget-level:** Each independent widget (chart, table, sidebar) gets its own. One widget fails, others survive.
+- **NOT on shared infrastructure:** Don't wrap nav, layout, or theme providers. If those fail, the whole app is broken anyway.
+
+## API Layer Architecture
+
+How you structure API calls affects testability, consistency, and maintainability:
+
+```
+features/contacts/api/
+  keys.js          ← query key factory
+  queries/
+    useContactsQuery.js
+    useContactDetail.js
+  mutations/
+    useContactMutations.js
+```
+
+**Key principles:**
+1. **Centralized error handling.** Axios interceptors or a shared `cxaxios` instance handle auth, retries, and error formatting in one place.
+2. **Request/response transformation.** Map API payloads to UI shapes in pure utility functions, not in components.
+3. **AbortController everywhere.** Every fetch passes `signal` for cleanup on unmount.
+4. **Query key hierarchy.** Hierarchical keys let you invalidate parent to cascade to children.
+
 ## Q&A
 
 **1. Where does form input state go?**

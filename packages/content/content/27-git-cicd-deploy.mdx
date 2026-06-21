@@ -51,6 +51,146 @@ Gradual rollout shifts traffic via load balancer weights. 5% new, 95% old. The l
 
 Feature flags decouple deploy from release. The app checks the flag before showing code. Toggle off → feature turns off without a deploy.
 
+## Git Branching Strategies
+
+### GitHub Flow (Simple)
+
+```
+main ← always deployable
+  ↑
+  feature-branch → PR → review → merge → auto-deploy
+```
+
+- `main` is always deployable
+- Branch per feature/fix
+- PR for review
+- Merge to `main` triggers deploy
+
+**Best for:** Small teams, continuous deployment, web apps.
+
+### Trunk-Based Development (Fastest)
+
+```
+main (trunk) ← always deployable
+  ↑
+  short-lived branches (< 1-2 days)
+  ↑
+  feature flags for incomplete work
+```
+
+- Branches live < 2 days
+- Feature flags hide incomplete work
+- Continuous integration, continuous deployment
+- Requires strong CI and feature flags
+
+**Best for:** Large teams, high-frequency deploys, mature CI/CD.
+
+### Git Flow (Structured)
+
+```
+main ← production releases
+  ↑
+  develop ← integration branch
+  ↑
+  feature branches
+  ↑
+  release branches (for versioning)
+  ↑
+  hotfix branches (for production fixes)
+```
+
+- `main` = production
+- `develop` = integration
+- `feature/*` = new work
+- `release/*` = version prep
+- `hotfix/*` = production fixes
+
+**Best for:** Release cycles, mobile apps, versioned software.
+
+### Decision
+
+| Factor | GitHub Flow | Trunk-Based | Git Flow |
+|---|---|---|---|
+| Team size | Small | Large | Medium-Large |
+| Deploy frequency | On merge | Continuous | Scheduled |
+| Complexity | Low | Medium | High |
+| Feature flags | Optional | Required | Optional |
+
+## Git Internals
+
+Git stores four object types:
+
+- **blob:** file content (binary data)
+- **tree:** directory listing (maps names to blobs/trees)
+- **commit:** snapshot + metadata (parent, author, message, tree hash)
+- **tag:** named pointer to a commit
+
+```text
+commit a1b2c3
+  tree d4e5f6          ← points to a tree (directory snapshot)
+    blob 789abc        ← file: index.js
+    blob def012        ← file: package.json
+    tree 345678        ← subdirectory: src/
+      blob 9abcdef     ← file: src/App.js
+  parent 000001        ← previous commit
+  author "Ashish"
+  message "feat: add avatar"
+```
+
+### How `git rebase` Works
+
+Rebase replays commits from one branch onto another. It creates new commit hashes:
+
+```text
+Before rebase:
+  main:    A --- B --- C
+  feature:     D --- E
+
+After `git rebase main`:
+  main:    A --- B --- C
+  feature:             D' --- E'  (new hashes, same changes)
+```
+
+Git walks back from `feature` to find the common ancestor with `main` (commit B). It then applies each feature commit (D, E) on top of C, creating new commits D' and E' with different hashes.
+
+**Why "don't rebase pushed branches":** If others have based work on D and E, rewriting them to D' and E' breaks their history. They'd have to rebase too, creating conflicts.
+
+### How `git merge` Works
+
+Merge creates a new "merge commit" with two parents:
+
+```text
+After merge:
+  main:    A --- B --- C --- M (merge commit)
+  feature:     D --- E -----/
+```
+
+The merge commit (M) has two parents: C and E. Git finds the common ancestor (B), compares both sides, and creates a combined snapshot.
+
+## Docker Basics for Frontend
+
+Docker containers package your app with its dependencies. Same container runs everywhere — dev, staging, production.
+
+```dockerfile
+# Multi-stage build: small production image
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=builder /app/dist /usr/share/nginx/html
+```
+
+**Why multi-stage:** The builder stage has Node.js + dev dependencies (~200MB). The production stage has only the built static files + nginx (~25MB). Final image is tiny.
+
+**Frontend-specific:** Docker is less critical for frontend than backend. Most frontend apps deploy as static files to a CDN. Docker matters when:
+- You need server-side rendering (Node.js container)
+- You run background jobs (image processing, data pipelines)
+- You need consistent dev environments (docker-compose)
+
 ## Tradeoffs
 
 **Merge vs rebase.** Merge preserves true history. Rebase creates linear history. Rule: rebase local branches to stay current. Merge when integrating shared work. Never rebase pushed branches.

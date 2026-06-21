@@ -146,3 +146,108 @@ Yes. Internally, `await` desugars to `Promise.resolve(value).then(resume)`. Even
 
 **Q: A while(true) loop runs for 3 seconds. Why does the UI freeze?**
 The loop keeps the call stack busy. The event loop can't run its tick because the stack is never empty. No macrotasks run. No microtasks run. No paint happens. Fix: chunk with `setTimeout` (break work into small pieces) or move to a Web Worker (separate thread).
+
+## Promise Combinators
+
+When you need to run multiple async operations, Promise provides four combinators:
+
+### `Promise.all` — All or Nothing
+
+```js
+const [user, posts, comments] = await Promise.all([
+  fetchUser(id),
+  fetchPosts(id),
+  fetchComments(id),
+]);
+```
+
+Resolves when ALL promises resolve. If ANY rejects, the whole thing rejects immediately. Use when all results are needed and one failure means the operation fails.
+
+### `Promise.allSettled` — Wait for Everything
+
+```js
+const results = await Promise.allSettled([
+  fetchUser(id),
+  fetchPosts(id),
+  fetchComments(id),
+]);
+// results = [
+//   { status: "fulfilled", value: {...} },
+//   { status: "rejected", reason: Error },
+//   { status: "fulfilled", value: {...} },
+// ]
+```
+
+Resolves when ALL promises settle (either resolve or reject). Never rejects. Returns an array of `{ status, value/reason }`. Use when you want all results regardless of individual failures.
+
+### `Promise.race` — First to Finish
+
+```js
+const fastest = await Promise.race([
+  fetchFromCDN(url),
+  fetchFromOrigin(url),
+]);
+```
+
+Resolves or rejects with the FIRST promise to settle. The other promises continue running but their results are ignored. Use for timeout patterns:
+
+```js
+function fetchWithTimeout(url, ms) {
+  return Promise.race([
+    fetch(url),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Timeout")), ms)
+    ),
+  ]);
+}
+```
+
+### `Promise.any` — First Success
+
+```js
+const content = await Promise.any([
+  fetchFromCDN1(url),
+  fetchFromCDN2(url),
+  fetchFromOrigin(url),
+]);
+```
+
+Resolves with the FIRST successfully resolved promise. Ignores rejections until ALL reject (then throws `AggregateError`). Use when you have multiple sources and any one succeeding is fine.
+
+### Comparison
+
+| Combinator | Resolves when | Rejects when | Use case |
+|---|---|---|---|
+| `Promise.all` | All resolve | Any rejects | All-or-nothing |
+| `Promise.allSettled` | All settle | Never | Report all results |
+| `Promise.race` | First settles | First rejects | Timeout pattern |
+| `Promise.any` | First resolves | All reject | Fallback sources |
+
+## `requestAnimationFrame` — Where It Fits
+
+rAF is neither a microtask nor a macrotask. It sits between macrotask execution and browser paint:
+
+```text
+Run macrotask
+  ↓
+Run ALL microtasks
+  ↓
+Run rAF callbacks (if any)
+  ↓
+Browser paints
+  ↓
+Run next macrotask
+```
+
+```js
+function animate() {
+  // update position
+  element.style.transform = `translateX(${x}px)`;
+  requestAnimationFrame(animate); // next frame
+}
+requestAnimationFrame(animate);
+```
+
+rAF callbacks run once per frame (~16.67ms at 60fps). They fire after microtasks but before paint. This guarantees your DOM mutations happen right before the browser paints — no wasted frames.
+
+**Interview gotcha:** `setTimeout(fn, 0)` and `requestAnimationFrame(fn)` are not the same. `setTimeout` schedules a macrotask that may run at any time after the current task. `rAF` runs before the next paint, giving you frame-synchronized updates.

@@ -57,39 +57,96 @@ Vite uses two modes:
 // Build: Rollup bundles into dist/assets/index-abc123.js
 ```
 
-## Tree-Shaking
+## Webpack — The Other Major Bundler
 
-Dead code elimination at the module boundary. Works because ESM has static structure — the bundler knows the full import/export graph before code runs.
+Webpack is the most widely deployed bundler in production. Understanding it is essential for legacy codebases and interviews.
 
-Trace what happens with `import { debounce } from "lodash-es"`:
+### Core Concepts
 
-1. Bundler resolves lodash-es, parses its exports.
-2. Marks `debounce` as used, everything else as unused.
-3. Checks unused exports for side effects — if a top-level statement runs code on import, it must be kept.
-4. Walks deeper into only `debounce`'s dependencies.
-5. Eliminates everything else. Output: ~4KB instead of 70KB.
+- **Entry:** Starting point of the dependency graph (`entry: "./src/index.js"`)
+- **Loaders:** Transform files that aren't JS (`babel-loader` for JSX, `css-loader` for CSS, `file-loader` for images)
+- **Plugins:** Run during the build lifecycle (`HtmlWebpackPlugin`, `MiniCssExtractPlugin`, `DefinePlugin`)
+- **Output:** Where the built files go (`output: { filename: "[name].[contenthash].js" }`)
 
-Side effects block tree-shaking. If a module has `"sideEffects": true`, the bundler includes everything. You can override with `"sideEffects": false` in your package.json, but verify — marking a CSS-in-JS library as side-effect-free breaks styles.
+```js
+// webpack.config.js
+module.exports = {
+  entry: "./src/index.js",
+  module: {
+    rules: [
+      { test: /\.jsx?$/, use: "babel-loader", exclude: /node_modules/ },
+      { test: /\.css$/, use: ["style-loader", "css-loader"] },
+    ],
+  },
+  plugins: [new HtmlWebpackPlugin({ template: "./src/index.html" })],
+};
+```
 
-## Code-Splitting
+### Loader vs Plugin
 
-Route-level splitting defers rarely-used code to lazy chunks:
+| | Loader | Plugin |
+|---|---|---|
+| Purpose | Transform individual files | Hook into build lifecycle |
+| Config | `module.rules` | `plugins` array |
+| Example | `babel-loader` (JSX → JS) | `HtmlWebpackPlugin` (inject script tags) |
 
-```tsx
-const Chart = React.lazy(() => import("./Chart"));
+### HMR in Webpack
 
-function Dashboard() {
-  return (
-    <Suspense fallback={<div>Loading chart...</div>}>
-      <Chart data={data} />
-    </Suspense>
-  );
+Hot Module Replacement works by:
+1. Dev server watches files for changes
+2. Changed module is recompiled
+3. HMR runtime swaps the module in the browser (no full page reload)
+4. Components preserve state because only the module is replaced
+
+## SWC — The Rust Replacement for Babel
+
+SWC (Speedy Web Compiler) is a Rust-based compiler that's 20-70x faster than Babel:
+
+- **Parsing:** Rust is faster than JavaScript for AST generation
+- **Transform:** Parallel compilation across CPU cores
+- **Output:** No AST → string conversion overhead
+
+Next.js uses SWC by default (since v12.6). Vite uses esbuild for dev, Rollup for prod. Both are faster than Babel.
+
+**When to use SWC:** When build speed matters and you don't need Babel plugins. SWC supports most Babel plugins but not all. Check compatibility.
+
+## Babel — The Transformation Engine
+
+Babel transforms modern JS into backward-compatible code:
+
+```js
+// Input: JSX + optional chaining
+const App = () => <div>{user?.name}</div>;
+
+// Output: React.createElement + conditional check
+const App = () => React.createElement("div", null, user === null || user === void 0 ? void 0 : user.name);
+```
+
+Babel plugins transform syntax. Babel presets are collections of plugins (`@babel/preset-react`, `@babel/preset-typescript`).
+
+**Interview gotcha:** "Does TypeScript need Babel?" No — TypeScript has its own compiler (`tsc`). But many projects use Babel for JSX/TSX because it's faster and has more plugin ecosystem. SWC is replacing both in modern setups.
+
+## Module Resolution
+
+When you write `import Button from "../components/Button"`, the bundler resolves the path:
+
+1. **Relative paths:** `./` or `../` — resolve from current file
+2. **Bare specifiers:** `import X from "react"` — resolve from `node_modules`
+3. **Package.json `exports`:** Modern resolution field (`"exports": { ".": "./dist/index.js" }`)
+4. **Path aliases:** `@/components/Button` — configure in bundler config
+
+```js
+// package.json — modern resolution
+{
+  "name": "my-lib",
+  "exports": {
+    ".": "./dist/index.js",
+    "./styles": "./dist/styles.css"
+  }
 }
 ```
 
-Rollup sees `import("./Chart")` and creates a separate chunk containing Chart and its dependencies (200KB). The initial bundle no longer includes chart code. The chunk downloads only when the user navigates to that route.
-
-Before: initial bundle 340KB, load time 3.2s on 3G. After: 120KB, 1.1s. No architecture change — just named ESM imports and route-level code-splitting.
+The `exports` field is the future. It controls which files can be imported from your package. `"main"` is legacy.
 
 ## Common Mistakes
 

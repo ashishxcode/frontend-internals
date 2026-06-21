@@ -67,7 +67,67 @@ const Button = forwardRef(({
 
 ## The Building Blocks
 
-**Controlled/Uncontrolled pattern** — shared hook:
+### Compound Components
+
+The most important pattern for component library design. Parent manages state, children consume it implicitly via Context:
+
+```jsx
+// Usage
+<Tabs defaultValue="profile">
+  <Tabs.List>
+    <Tabs.Trigger value="profile">Profile</Tabs.Trigger>
+    <Tabs.Trigger value="settings">Settings</Tabs.Trigger>
+  </Tabs.List>
+  <Tabs.Content value="profile">Profile content</Tabs.Content>
+  <Tabs.Content value="settings">Settings content</Tabs.Content>
+</Tabs>
+```
+
+```jsx
+// Implementation
+const TabsContext = createContext();
+
+function Tabs({ defaultValue, children, ...props }) {
+  const [value, setValue] = useState(defaultValue);
+  return (
+    <TabsContext.Provider value={{ value, setValue }}>
+      <div {...props}>{children}</div>
+    </TabsContext.Provider>
+  );
+}
+
+Tabs.List = function TabsList({ children, ...props }) {
+  return <div role="tablist" {...props}>{children}</div>;
+};
+
+Tabs.Trigger = function TabsTrigger({ value, children, ...props }) {
+  const ctx = useContext(TabsContext);
+  return (
+    <button
+      role="tab"
+      aria-selected={ctx.value === value}
+      onClick={() => ctx.setValue(value)}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+};
+
+Tabs.Content = function TabsContent({ value, children, ...props }) {
+  const ctx = useContext(TabsContext);
+  if (ctx.value !== value) return null;
+  return <div role="tabpanel" {...props}>{children}</div>;
+};
+```
+
+**Why compound components win:**
+- Consumer doesn't need to manage state (parent does)
+- Internal state is implicit (no prop drilling)
+- Easy to extend (add new sub-components without breaking API)
+- Accessible by default (ARIA roles baked in)
+
+### Controlled/Uncontrolled pattern — shared hook:
 ```jsx
 function useControllableState({ value, defaultValue, onChange }) {
   const [internal, setInternal] = useState(defaultValue);

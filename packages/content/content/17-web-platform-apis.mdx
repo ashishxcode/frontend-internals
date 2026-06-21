@@ -100,6 +100,75 @@ console.log(buffer.byteLength); // 0 — ownership moved
 
 **Rule of thumb:** Auth tokens in HttpOnly cookies (XSS-safe, sent with requests). Large structured data in IndexedDB (async, no size limit). Small preferences in localStorage (simple, sync).
 
+## Service Workers — Offline Support and Caching
+
+A Service Worker is a special Web Worker that intercepts network requests. It sits between your app and the network:
+
+```
+App → Service Worker → Network (or Cache)
+```
+
+```js
+// Register
+navigator.serviceWorker.register("/sw.js");
+
+// sw.js
+self.addEventListener("fetch", (event) => {
+  event.respondWith(
+    caches.match(event.request).then((cached) => {
+      return cached || fetch(event.request); // cache-first, fallback to network
+    })
+  );
+});
+```
+
+### Caching Strategies
+
+| Strategy | Behavior | Use case |
+|---|---|---|
+| Cache-first | Serve from cache, fetch if miss | Static assets (images, fonts) |
+| Network-first | Fetch, cache response, serve cache if offline | API data, dynamic content |
+| Stale-while-revalidate | Serve cache immediately, fetch in background | Frequent reads, tolerate stale |
+| Network-only | Never cache | Analytics, non-GET requests |
+
+### PWA (Progressive Web App)
+
+Service Workers enable PWAs — web apps that work offline and feel native:
+
+1. **Service Worker** caches assets and API responses
+2. **Web App Manifest** defines icons, theme color, display mode
+3. **Install prompt** lets users add to home screen
+
+```json
+// manifest.json
+{
+  "name": "My App",
+  "short_name": "App",
+  "display": "standalone",
+  "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+}
+```
+
+### Interview Gotcha
+
+"Can a Service Worker access the DOM?" No. It runs in its own thread with no DOM access. Communication happens via `postMessage`. This is why Service Workers can't directly update the UI — they must message the main thread.
+
+## BroadcastChannel — Cross-Tab Communication
+
+```js
+// Tab 1: send
+const channel = new BroadcastChannel("auth");
+channel.postMessage({ type: "LOGOUT" });
+
+// Tab 2: receive
+const channel = new BroadcastChannel("auth");
+channel.onmessage = (e) => {
+  if (e.data.type === "LOGOUT") window.location.reload();
+};
+```
+
+When a user logs out in one tab, all other tabs can react. `BroadcastChannel` is simpler than `localStorage` events and more direct than `window.postMessage`.
+
 ## Common Mistakes
 
 - Scroll handlers calling `getBoundingClientRect` instead of IntersectionObserver — causes layout thrashing.

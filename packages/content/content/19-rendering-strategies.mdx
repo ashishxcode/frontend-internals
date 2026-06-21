@@ -68,25 +68,127 @@ If server HTML and client render do not match (e.g., `Date.now()` in render), Re
 
 Hydration cost hurts INP (Interaction to Next Paint). The user sees buttons but clicking them does nothing until hydration completes.
 
-## RSC: What Ships JS, What Does Not
+## Streaming SSR — Progressive Rendering
 
-Server components run on the server. Their JavaScript never ships to the browser. Client components (marked `"use client"`) ship JS and hydrate normally.
+Traditional SSR waits for the entire component tree to render before sending any HTML. Streaming SSR sends HTML in chunks as they become ready:
 
-The RSC payload is a streaming JSON-like format describing the component tree. Server component output is serialized statically. Client component bundles ship separately. Net effect: the JS bundle contains only client component code.
+```mermaid
+sequenceDiagram
+    participant S as Server
+    participant B as Browser
+    S->>B: Shell (layout, nav, header)
+    Note over B: User sees layout immediately
+    S->>B: Suspense boundary 1 (profile data ready)
+    Note over B: Profile appears
+    S->>B: Suspense boundary 2 (comments loading)
+    Note over B: Comments appear when ready
+```
 
-You can import large libraries (markdown parsers, syntax highlighters) in server components without affecting bundle size.
+```jsx
+// Server
+import { renderToPipeableStream } from "react-dom/server";
 
-## When to Use What
+app.get("/", (req, res) => {
+  const { pipe, abort } = renderToPipeableStream(<App />, {
+    bootstrapScripts: ["/client.js"],
+    onShellReady() {
+      res.setHeader("content-type", "text/html");
+      pipe(res); // start streaming immediately
+    },
+  });
+});
+```
 
-| Strategy | Best for | Avoid when |
-|---|---|---|
-| CSR | Authenticated dashboards | SEO matters, first paint matters |
-| SSR | Personalized per-request pages | Static content (SSG is faster) |
-| SSG | Marketing pages, docs | Dynamic per-user data |
-| ISR | Product pages that update occasionally | Real-time data |
-| RSC | Mixed static + interactive pages | Simple apps without framework support |
+**How it works:**
+1. React renders the shell (layout, nav, static content) and sends it immediately
+2. Suspense boundaries with pending data show fallbacks
+3. When data resolves, React streams the resolved HTML and patches the DOM
+4. The browser progressively renders each chunk
 
-A common mistake is using SSR everywhere because "it is faster." SSR improves first paint but adds server cost and hydration overhead. For marketing pages, SSG is faster (CDN edge). For dashboards, CSR is simpler and cheaper.
+**Benefits:**
+- Time to First Byte (TTFB) improves dramatically — no waiting for slow data
+- Time to First Paint improves — user sees layout immediately
+- Works with React Suspense — each `<Suspense>` boundary is an independent streaming boundary
+
+### Selective Hydration
+
+With streaming SSR, React can hydrate visible components first. If a Suspense boundary resolves early, React hydrates that part before the rest:
+
+```jsx
+<Suspense fallback={<Skeleton />}>
+  <UserProfile />  {/* hydrates first — visible and interactive */}
+</Suspense>
+<Suspense fallback={<Skeleton />}>
+  <Comments />     {/* hydrates later — still loading */}
+</Suspense>
+```
+
+The user can interact with `UserProfile` while `Comments` is still loading. This improves INP.
+
+## React 19 Features
+
+### `use()` — Unwrap Promises in Render
+
+```jsx
+function UserProfile({ userPromise }) {
+  const user = use(userPromise); // suspends until resolved
+  return <h1>{user.name}</h1>;
+}
+```
+
+`use()` is like `await` but works during render. It suspends the component until the promise resolves. Works with Suspense for loading states and Error Boundary for rejection.
+
+### Server Actions
+
+```jsx
+// Server Action — runs on the server, no API route needed
+async function createTodo(formData) {
+  "use server";
+  const title = formData.get("title");
+  await db.todos.create({ data: { title } });
+  revalidatePath("/todos");
+}
+
+// Client component
+<form action={createTodo}>
+  <input name="title" />
+  <button type="submit">Add</button>
+</form>
+```
+
+Server Actions let client components call server functions directly. No fetch, no API route, no loading state management. React handles the transition, pending state, and error handling.
+
+### `useFormStatus` and `useOptimistic`
+
+```jsx
+function SubmitButton() {
+  const { pending } = useFormStatus(); // reads parent <form>'s status
+  return <button disabled={pending}>{pending ? "Saving..." : "Save"}</button>;
+}
+
+function TodoList({ todos, addTodo }) {
+  const [optimisticTodos, addOptimistic] = useOptimistic(
+    todos,
+    (state, newTodo) => [...state, { ...newTodo, pending: true }]
+  );
+  // optimisticTodos shows the new todo immediately before server confirms
+}
+```
+
+## Edge Rendering
+
+Run your server code at the CDN edge — close to the user, not in a single region:
+
+```
+User in Tokyo → Edge node in Tokyo → SSR → response
+User in London → Edge node in London → SSR → response
+```
+
+**Benefits:** Lower latency (edge nodes are <50ms from users), automatic geo-distribution.
+
+**Limitations:** No Node.js APIs (no `fs`, no native modules), limited runtime (Vercel Edge uses V8 isolates, Cloudflare Workers use V8 isolates). Cold starts are fast, but execution time is limited (typically 30s).
+
+**When to use:** SSR for pages with mostly static content + a few dynamic slots. API routes that do light computation. Not for heavy server-side logic.
 
 ## Common Mistakes
 

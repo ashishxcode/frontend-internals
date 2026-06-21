@@ -112,6 +112,83 @@ Server state is not your state. It is a cache of someone else's data. Treat it t
 
 **Modern default:** TanStack Query (server) + useState (local) + a little Zustand (global client). Redux only when you need its middleware ecosystem at scale.
 
+## Redux Toolkit — When You Need It
+
+Redux Toolkit (RTK) is the official, modern way to use Redux. It eliminates the boilerplate that gave Redux its bad reputation.
+
+```js
+import { createSlice, configureStore } from "@reduxjs/toolkit";
+
+const counterSlice = createSlice({
+  name: "counter",
+  initialState: { count: 0 },
+  reducers: {
+    increment: (state) => { state.count += 1; }, // Immer handles immutability
+    decrement: (state) => { state.count -= 1; },
+  },
+});
+
+export const { increment, decrement } = counterSlice.actions;
+export default counterSlice.reducer;
+```
+
+**When Redux Toolkit wins:**
+- Large teams with many features sharing state
+- Complex async flows (thunks, sagas) with middleware
+- Need for time-travel debugging (Redux DevTools)
+- RTK Query for API caching (alternative to TanStack Query)
+
+**When Zustand is simpler:**
+- Small-to-medium apps
+- Selective subscriptions needed
+- Less boilerplate preferred
+- No middleware ecosystem needed
+
+## Atomic State — Jotai and Recoil
+
+Instead of one large store, atomic state splits state into small, independent atoms:
+
+```jsx
+import { atom, useAtom } from "jotai";
+
+const countAtom = atom(0);
+const doubleCountAtom = atom((get) => get(countAtom) * 2); // derived atom
+
+function Counter() {
+  const [count, setCount] = useAtom(countAtom);
+  return <button onClick={() => setCount(c => c + 1)}>{count}</button>;
+}
+```
+
+**When atomic state wins:**
+- Many independent pieces of state
+- Derived/computed state is common
+- You want fine-grained re-rendering (only components using the changed atom re-render)
+
+**The atoms vs stores debate:**
+- Stores (Zustand, Redux) = centralized, easy to debug, clear data flow
+- Atoms (Jotai, Recoil) = decentralized, fine-grained, flexible composition
+
+Neither is universally better. Pick based on your team's mental model.
+
+## URL as State
+
+Filters, search queries, and pagination should live in the URL — not in React state:
+
+```jsx
+const [searchParams, setSearchParams] = useSearchParams();
+const page = parseInt(searchParams.get("page") || "1");
+const query = searchParams.get("q") || "";
+```
+
+**Why URL state:**
+- Shareable (send a link with filters applied)
+- Back/forward navigation works
+- Survives page refresh
+- SEO-friendly
+
+**Pattern:** URL holds the "source of truth" for filters/pagination. React state holds UI state (modal open, sidebar collapsed). TanStack Query holds server data.
+
 ## Common Mistakes
 
 - One giant Context for everything that changes often — causes app-wide re-renders.

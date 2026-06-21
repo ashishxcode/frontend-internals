@@ -59,6 +59,112 @@ ARIA fills gaps in what native HTML can express. For example, `aria-live="polite
 
 Bad ARIA lies to assistive technology. `role="heading"` on a `<div>` that is not a heading confuses navigation. No ARIA is better than wrong ARIA.
 
+## ARIA Roles — The Complete Picture
+
+### Landmark Roles
+
+These define the page structure for screen reader navigation:
+
+| Role | HTML Equivalent | Purpose |
+|---|---|---|
+| `banner` | `<header>` | Site header, logo, nav |
+| `navigation` | `<nav>` | Primary navigation |
+| `main` | `<main>` | Primary content |
+| `complementary` | `<aside>` | Sidebar, related content |
+| `contentinfo` | `<footer>` | Footer, copyright |
+| `search` | `<form role="search">` | Search functionality |
+
+Screen reader users jump between landmarks with shortcuts (e.g., `Landmarks` menu in VoiceOver).
+
+### Widget Roles
+
+These define interactive components:
+
+| Role | Purpose | Required States |
+|---|---|---|
+| `button` | Clickable action | `aria-disabled` |
+| `tab` | Tab header | `aria-selected`, `aria-controls` |
+| `tabpanel` | Tab content | `aria-labelledby` |
+| `menuitem` | Menu option | `aria-disabled` |
+| `dialog` | Modal/popup | `aria-modal`, `aria-labelledby` |
+| `alert` | Important message | Live region, auto-focus |
+| `progressbar` | Loading indicator | `aria-valuenow`, `aria-valuemax` |
+
+### Live Regions
+
+Announce dynamic content changes without moving focus:
+
+```jsx
+<div aria-live="polite" aria-atomic="true">
+  {statusMessage}
+</div>
+```
+
+- `aria-live="polite"` — waits for user idle, then announces
+- `aria-live="assertive"` — interrupts current announcement
+- `aria-atomic="true"` — announces the entire region, not just the changed part
+
+Use for: form submission results, cart count updates, chat messages, error messages.
+
+## Keyboard Navigation Patterns
+
+### Roving Tabindex
+
+For composite widgets (tabs, menus, toolbars), only one item is in the tab order. Arrow keys move focus between items:
+
+```jsx
+function TabList({ tabs, activeTab, onSelect }) {
+  return (
+    <div role="tablist">
+      {tabs.map((tab, i) => (
+        <button
+          key={tab.id}
+          role="tab"
+          aria-selected={activeTab === tab.id}
+          tabIndex={activeTab === tab.id ? 0 : -1}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowRight") onSelect(tabs[(i + 1) % tabs.length].id);
+            if (e.key === "ArrowLeft") onSelect(tabs[(i - 1 + tabs.length) % tabs.length].id);
+          }}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+```
+
+The active tab has `tabIndex={0}` (in tab order). All others have `tabIndex={-1}` (focusable via JS but not Tab key). Arrow keys move focus. Tab moves to the next focusable element outside the widget.
+
+### Skip Links
+
+```jsx
+<a href="#main-content" className="sr-only focus:not-sr-only">
+  Skip to main content
+</a>
+```
+
+Hidden until focused via Tab. Lets keyboard users skip navigation and jump to content.
+
+## Color Contrast
+
+WCAG 2.1 AA requires:
+- **Normal text:** 4.5:1 contrast ratio (black on white = 21:1)
+- **Large text:** 3:1 contrast ratio (18pt+ or 14pt+ bold)
+- **UI components:** 3:1 contrast ratio (borders, icons)
+
+Tools: Chrome DevTools (Elements → Computed → contrast ratio), WebAIM Contrast Checker.
+
+Don't rely on color alone to convey meaning. Add icons, text labels, or patterns:
+```jsx
+// Bad: color only
+<span style={{ color: "red" }}>Error</span>
+
+// Good: color + icon + text
+<span style={{ color: "red" }}>⚠ Error: invalid email</span>
+```
+
 ## Accessible Modal
 
 ```tsx

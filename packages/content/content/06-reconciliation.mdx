@@ -124,3 +124,99 @@ Change the key: `<Editor key={documentId} />`. When `documentId` changes, React 
 
 **Q: Same-type vs different-type at a position — what happens to DOM, state, effects?**
 Same type: DOM reused, Fiber reused, state preserved, effects run only if deps changed. Different type: DOM destroyed, Fiber destroyed, state lost, previous effects cleaned up, new effects run as fresh mount.
+
+## Interview Deep-Dive: React.memo and Unnecessary Re-renders
+
+This pattern comes from a real senior frontend interview. The interviewer walked through a逐步加深 (progressive deepening) of the memo question.
+
+### Q: Parent has states A and B. Child receives only A as prop. B changes. Does Child re-render?
+
+**Yes.** When parent re-renders (because B changed), React re-renders all children by default — regardless of whether their props changed. This is by design: React assumes re-renders are cheap and that correctness (not performance) is the default.
+
+### Q: Is this an unnecessary re-render?
+
+**It depends.** If the child is cheap (just renders some text), the re-render is negligible. React can re-render thousands of simple components in <1ms. The re-render is only "unnecessary" if the child is expensive (complex computation, large subtree, heavy animation).
+
+### Q: How do you fix it?
+
+**React.memo:** Wrap the child in `React.memo`. It performs a shallow comparison of props. If props haven't changed, the child skips re-rendering.
+
+```jsx
+const Child = React.memo(function Child({ a }) {
+  return <div>{a}</div>;
+});
+```
+
+### Q: Should you wrap ALL components in React.memo?
+
+**No.** This is the critical insight most candidates miss.
+
+`React.memo` has costs:
+1. **Shallow comparison** on every parent render — adds CPU time
+2. **Memory overhead** — stores previous props for comparison
+3. **False sense of security** — if you pass inline objects/functions, memo does nothing
+
+**The rule:** Memoize measured hot spots. Not everything. If you haven't measured, don't memoize.
+
+### Q: You memoized the child, but now you're passing a function C as a prop. Child still re-renders. Why?
+
+Because **every render creates a new function object**. `React.memo` does shallow comparison — it sees a new reference for `C` and concludes props changed.
+
+```jsx
+function Parent() {
+  const [b, setB] = useState(0);
+  
+  function handleClick() { /* ... */ }  // new reference every render
+  
+  return <MemoizedChild onClick={handleClick} />;
+}
+```
+
+### Q: How do you fix the function problem?
+
+**useCallback** stabilizes the function reference:
+
+```jsx
+function Parent() {
+  const [b, setB] = useState(0);
+  
+  const handleClick = useCallback(() => {
+    /* ... */
+  }, []);  // stable reference
+  
+  return <MemoizedChild onClick={handleClick} />;
+}
+```
+
+### Q: Should you wrap ALL functions in useCallback?
+
+**No. Same logic as React.memo.** Only when:
+1. The function is passed to a `React.memo`-wrapped child
+2. The function is a dependency of another hook
+3. The function is expensive to recreate
+
+For presentational components 1-2 levels deep that don't do heavy work, the overhead of memoization exceeds the benefit.
+
+### Q: When WOULD you use useCallback?
+
+- Function passed to a `React.memo` child (prevents child re-render)
+- Function used as a dependency of `useEffect` or `useMemo` (prevents unnecessary effect re-runs)
+- Function passed through Context (prevents all consumers from re-rendering)
+- Function passed 3+ levels deep as prop (compounding re-render cost)
+
+### The Decision Framework
+
+```
+Is the child expensive to render?
+  ├─ No → Don't memoize. Re-render is cheap.
+  └─ Yes → Is the function passed to a memoized child?
+              ├─ No → React.memo alone is enough
+              └─ Yes → Use useCallback to stabilize the function
+                       + React.memo on the child
+```
+
+### Common Interview Follow-ups
+
+1. "What about useMemo?" — Same idea but for values, not functions. Use when computation is expensive.
+2. "What about React Compiler?" — React 19's compiler auto-memoizes. But understanding the manual approach shows you understand *why* memoization matters.
+3. "How do you measure if memo helps?" — React DevTools Profiler. Record before/after. Compare render counts and commit times.

@@ -130,3 +130,117 @@ INP (Interaction to Next Paint). It measures latency from user interaction to ne
 
 **Q: Classify as less/later/elsewhere: code-split, Web Worker, virtualization, useDeferredValue.**
 Do less: virtualization (fewer DOM nodes), code-splitting (less JS to parse). Do it later: useDeferredValue (defer non-urgent render). Do it elsewhere: Web Worker (separate thread).
+
+## Interview Deep-Dive: Infinite Scrolling vs Pagination
+
+This is a real interview scenario from a senior frontend interview. The interviewer presented a contacts page with 500K records, search, filters, multi-select actions, and real-time email status updates.
+
+### The Setup
+
+You have a contacts table with 500K rows. Features: search, filter, bulk actions (multi-select), real-time email status per row. Most-used page in the app. Users spend long sessions here.
+
+### Q: Infinite scrolling or pagination?
+
+**Neither is universally better.** The decision depends on:
+
+| Factor | Pagination wins | Infinite scroll wins |
+|---|---|---|
+| Known position | "Show me page 47" | Not needed |
+| Keyboard navigation | Page numbers are focusable | Requires virtual focus |
+| SEO / bookmarking | URL can include page param | Harder to share position |
+| UX feel |断裂感 (context switch) | Fluid, exploratory |
+| Implementation | Simpler | Complex (virtualization required) |
+
+**For this scenario (search + filters + 500K records):** Pagination is usually better because users narrow results with search/filters. Once filtered down to 10-50 results, pagination is clear and fast. Infinite scrolling shines when users *browse* without filtering.
+
+### Q: Product team demands infinite scrolling. How do you implement it?
+
+**Three layers:**
+
+```
+Data Layer (TanStack Query / cache)
+    ↓ holds all fetched pages
+Virtualization Layer (react-virtual / custom)
+    ↓ determines which rows to render
+DOM Layer (actual <Row> components)
+    ↓ only ~20 rows in DOM at any time
+```
+
+**IntersectionObserver** detects when the user scrolls near the bottom (5-10% threshold). Pre-fetch the next page before the user reaches the end. Render only visible rows + overscan (2-3 extra above/below).
+
+### Q: How does virtualization work under the hood?
+
+```mermaid
+flowchart LR
+    S["scrollTop"] --> calc["start = floor(scrollTop / rowHeight)"]
+    calc --> slice["render contacts.slice(start, start + visibleCount)"]
+    slice --> pos["position with transform: translateY(start * rowHeight)"]
+```
+
+- Container height = totalRows × rowHeight (creates natural scrollbar)
+- Only ~20 rows exist in DOM at any time
+- Position with `transform` (GPU-accelerated), NOT `top`/`margin` (causes reflow)
+
+**Two implementation approaches:**
+1. **Position absolute** — rows positioned absolutely, use `top`/`left`. Triggers frequent repaint.
+2. **Transform-based** — rows positioned with `translateY`. GPU-optimized, minimal repaint.
+
+Transform-based is preferred. The trade-off is worth it: instead of rendering 1000 rows, you render 20. The GPU handles `transform` compositing with near-zero cost.
+
+### Q: How do you handle bulk operations (select all) with pagination/virtualization?
+
+You can't hold all 500K IDs in memory. Use a **three-state model**:
+
+```js
+{
+  selectAll: false,        // "select all" checkbox state
+  positiveIds: [1, 2, 3], // explicitly selected IDs
+  negativeIds: [4, 5]     // explicitly excluded IDs
+}
+```
+
+**Scenarios:**
+- User checks 3 rows → `positiveIds: [1, 2, 3]`, `selectAll: false`
+- User clicks "Select All" → `selectAll: true`, `positiveIds: []`, `negativeIds: []`
+- User unchecks row 5 from "Select All" → `selectAll: true`, `negativeIds: [5]`
+
+For API calls, send the strategy: `{ selectAll: true, excludeIds: [5] }` or `{ ids: [1, 2, 3] }`.
+
+### Q: How do you handle real-time updates mid-scroll?
+
+This is the hardest problem. A real-time event (email status change) arrives while the user is scrolling. If you update state, the list re-renders and the scroll position jumps.
+
+**Solution: Separate data layer from render layer.**
+
+```
+Real-time events → Data Layer (updates state)
+                       ↓
+Virtualization Layer (reads data, determines visible rows)
+                       ↓
+DOM Layer (renders only visible rows)
+```
+
+- The data layer receives events and updates the store
+- The virtualization layer only reads data for visible rows
+- Scroll position is maintained by the container's `scrollTop`, not by React state
+
+**For items that scroll off-screen:** Stop listening to real-time events for non-visible rows. Resume when they scroll back into view.
+
+**For deletions mid-scroll:** Don't shift the entire list in real-time. Instead, show an indicator: "3 new items. Click to refresh." (This is exactly how Twitter/Instagram handle it.) The user clicks to refresh the list. This avoids the jarring experience of the scroll position jumping when items are deleted from above.
+
+```mermaid
+flowchart TD
+    event[Real-time event arrives] --> check{Is row visible?}
+    check -->|yes| update[Update row in-place]
+    check -->|no| queue[Queue update for when row scrolls into view]
+    event2[Deletion event] --> banner[Show "3 contacts deleted. Click to refresh."]
+    banner --> click[User clicks] --> refresh[Re-fetch and re-render]
+```
+
+### Q: What are the disadvantages of virtualization?
+
+1. **Ctrl+F breaks** — off-screen rows aren't in the DOM, so browser search can't find them.
+2. **Accessibility** — screen readers need ARIA attributes (`aria-setsize`, `aria-posinset`), focus management is tricky.
+3. **Variable row heights** — the math assumes uniform height. Variable heights cause scroll jumps.
+4. **Sticky headers** — need explicit handling outside the virtualized area.
+5. **Scroll-to-row** — requires calculating the offset manually.

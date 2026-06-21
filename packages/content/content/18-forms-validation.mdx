@@ -103,6 +103,96 @@ When you dispatch `SUBMIT`, the state becomes `{ status: "submitting" }` — the
 - Trusting client validation only — client validation is for UX, server validation is for security.
 - Duplicating shape in a type and a validator — infer the type from the schema.
 
+## File Upload Patterns
+
+File uploads are a common machine-coding prompt. The key challenges: drag-and-drop, preview, progress tracking, and validation.
+
+### Drag and Drop
+
+```jsx
+function FileDrop({ onFile }) {
+  const [isDragging, setIsDragging] = useState(false);
+
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        onFile(e.dataTransfer.files[0]);
+      }}
+      className={isDragging ? "border-blue-500" : "border-gray-300"}
+    >
+      Drop a file here
+    </div>
+  );
+}
+```
+
+### Upload with Progress
+
+```jsx
+function useFileUpload() {
+  const [progress, setProgress] = useState(0);
+
+  const upload = async (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setProgress((e.loaded / e.total) * 100);
+    };
+
+    return new Promise((resolve, reject) => {
+      xhr.onload = () => resolve(JSON.parse(xhr.responseText));
+      xhr.onerror = reject;
+      xhr.open("POST", "/api/upload");
+      xhr.send(formData);
+    });
+  };
+
+  return { upload, progress };
+}
+```
+
+Use `XMLHttpRequest` for progress tracking — `fetch` doesn't support upload progress events.
+
+### Validation
+
+Validate before upload: file type (MIME or extension), file size (prevent huge files), and file count (single vs multiple). Show errors immediately — don't upload and let the server reject.
+
+### Multi-Step/Wizard Forms
+
+Multi-step forms need state persistence across steps:
+
+```jsx
+function WizardForm() {
+  const [step, setStep] = useState(0);
+  const [formData, setFormData] = useState({});
+
+  const steps = [PersonalInfo, Address, Payment];
+
+  return (
+    <div>
+      {React.createElement(steps[step], {
+        data: formData,
+        onChange: (partial) => setFormData(prev => ({ ...prev, ...partial })),
+        onNext: () => setStep(s => s + 1),
+        onBack: () => setStep(s => s - 1),
+      })}
+    </div>
+  );
+}
+```
+
+**Key decisions:**
+- Store step data in parent state (not URL, unless you need shareable links)
+- Validate each step before allowing "Next"
+- Allow going back without losing data
+- Submit all data at once on the final step
+
 ## Q&A
 
 **Q: Why does RHF not re-render the whole form on each keystroke?**

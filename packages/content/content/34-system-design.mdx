@@ -200,6 +200,89 @@ new ModuleFederationPlugin({
 
 The most important tradeoff: ease of initial implementation vs ease of future change.
 
+## Problem 4: Rich Text Editor
+
+A Notion/Google Docs-style editor. One of the most common frontend system design questions.
+
+### Requirements Clarification
+
+```text
+Functional:
+- Rich text editing (bold, italic, headings, lists, code blocks)
+- Collaborative editing (multiple users)
+- Media embedding (images, videos)
+- Markdown shortcuts (type # + space → heading)
+
+Non-functional:
+- Performance with large documents (10K+ words)
+- Offline support with sync
+- Undo/redo (full history)
+- Accessible to screen readers
+```
+
+### Architecture Decision: contenteditable vs Custom Renderer
+
+| Approach | Pros | Cons |
+|---|---|---|
+| `contenteditable` (ProseMirror/Slate) | Browser handles basic editing, IME support | Browser inconsistencies, complex to control |
+| Custom renderer (Canvas/DOM) | Full control, consistent across browsers | Must reimplement everything (selection, IME, clipboard) |
+
+**Answer:** Use ProseMirror or Slate. They provide a controlled document model on top of `contenteditable`. You get browser compatibility (IME, clipboard, selection) without fighting the browser's editing behavior.
+
+### Document Model
+
+```text
+EditorState
+  ├──.doc: ProseMirror Node (tree of blocks)
+  ├── selection: { anchor: 5, head: 10 }
+  ├── history: { undoStack: [], redoStack: [] }
+  └── plugins: [collaboration, markdown, mentions]
+```
+
+The document is a tree of typed nodes: `paragraph`, `heading`, `bulletList`, `listItem`, `codeBlock`. Each node has marks (inline formatting: `bold`, `italic`, `link`). This is the source of truth — the DOM is a projection.
+
+### Collaborative Editing
+
+Two models:
+
+1. **Operational Transform (OT):** Transform operations against concurrent operations. Central server resolves conflicts. Google Docs uses this. Complex to implement correctly.
+
+2. **CRDT (Conflict-free Replicated Data Type):** Each character has a unique ID (client + timestamp). Merge is commutative and idempotent. No central server needed. Y.js is the standard CRDT library.
+
+```text
+User A types "Hello"    → [H, e, l, l, o]
+User B types "World"    → [W, o, r, l, d]
+Merge: "HelloWorld"     → [H, e, l, l, o, W, o, r, l, d]
+No conflict — CRDT handles ordering
+```
+
+### Collaboration Architecture
+
+```
+Client A ←→ WebSocket ←→ Server (Y.js awareness) ←→ WebSocket ←→ Client B
+                                  ↓
+                           Persistence (Postgres/Yjs-db)
+```
+
+- Y.js document synced via WebSocket
+- Awareness protocol shows cursors and selections
+- Server persists document snapshots periodically
+- Conflict resolution: CRDT merge (automatic)
+
+### Key Design Decisions
+
+1. **Schema-driven:** Define allowed node types, marks, and rules. The editor validates against the schema.
+2. **Plugin architecture:** Collaborative editing, markdown shortcuts, mentions, and image upload are all plugins. They don't modify core editor logic.
+3. **Immutable state:** Editor state is immutable. Each transaction produces a new state. Undo/redo is state history.
+4. **Virtual rendering:** Only visible paragraphs are rendered. Large documents don't cause performance issues.
+
+### Common Interview Follow-ups
+
+- "How do you handle offline?" → Y.js documents can be updated offline. Sync when reconnected.
+- "How do you handle large documents?" → Virtual rendering (only visible paragraphs in DOM).
+- "How do you handle mentions (@user)?" → Custom node type with autocomplete. Mention is a node, not inline text.
+- "How do you handle images?" → Upload to CDN, insert as node with URL. No base64 in document.
+
 ## Common Mistakes
 
 - Jumping to implementation — start with requirements, not code.

@@ -109,6 +109,70 @@ The fix is never to raise the child's number. It's to find the ancestor that cre
 
 **The difference:** Flexbox is content-first — items determine the layout. Grid is layout-first — you define the grid, items fill it. A row of buttons is flex. A dashboard with sidebar + main + header is grid. Pick by axis count.
 
+## Responsive Design
+
+Modern responsive design uses three tools:
+
+### Media Queries
+
+```css
+/* Mobile first: base styles for mobile, add breakpoints for larger screens */
+.container { padding: 16px; }
+
+@media (min-width: 768px) {
+  .container { padding: 24px; }
+}
+
+@media (min-width: 1024px) {
+  .container { padding: 32px; max-width: 1200px; margin: 0 auto; }
+}
+```
+
+### Container Queries (CSS Container)
+
+Instead of querying the viewport, query the parent container:
+
+```css
+.card-container { container-type: inline-size; }
+
+@container (min-width: 400px) {
+  .card { display: grid; grid-template-columns: 1fr 2fr; }
+}
+```
+
+The card layout adapts to its container width, not the viewport. This is critical for component libraries where a card might live in a sidebar (narrow) or main content (wide).
+
+### Fluid Typography with `clamp()`
+
+```css
+h1 { font-size: clamp(1.5rem, 4vw, 3rem); }
+/* Minimum 1.5rem, scales with viewport, maximum 3rem */
+```
+
+No media queries needed. The font scales smoothly between min and max.
+
+## CSS Custom Properties (Variables)
+
+```css
+:root {
+  --primary: #3b82f6;
+  --spacing-md: 16px;
+}
+
+.button { background: var(--primary); padding: var(--spacing-md); }
+```
+
+**Performance:** Custom properties are resolved at computed-value time, not parse time. They inherit down the DOM tree. Changing a variable on a parent triggers re-computation of all descendants — powerful for theming but can cause performance issues if overused.
+
+**Dynamic theming:**
+
+```js
+// Toggle dark mode
+document.documentElement.style.setProperty("--bg", "#1a1a1a");
+```
+
+**vs Tailwind:** Tailwind generates static utility classes at build time. Custom properties are dynamic at runtime. They solve different problems — Tailwind for layout/spacing consistency, custom properties for runtime theming.
+
 ## Q&A
 
 **1. Why does my z-index not work?**
