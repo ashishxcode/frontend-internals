@@ -1,0 +1,233 @@
+---
+title: "Networking & HTTP"
+chapter: "13"
+part: "Networking & Security"
+description: "HTTP/1.1·2·3, caching, CORS, WebSockets, CDN"
+---
+
+
+> Builds on Ch 02 (async/fetch) and Ch 10 (caching). The JD asks you to "collaborate with
+> backend to resolve ambiguity" — that means knowing the wire.
+
+---
+
+## The one mental model
+
+> **A network request is a typed MESSAGE (method + URL + headers + body) sent over a CONNECTION,
+> answered with a typed response (status + headers + body). Almost every networking topic is an
+> optimization of one of two things: reuse the expensive CONNECTION (HTTP/1.1 keep-alive → HTTP/2
+> multiplexing → HTTP/3 over QUIC), or avoid the request entirely with CACHING (headers that say
+> "reuse this for N seconds" or "ask if it changed"). Security (CORS, cookies) is the browser
+> adding rules about WHO may send WHAT to WHOM.**
+
+From "message over a connection, optimized by reuse + caching" you derive why HTTP/2 fixed
+head-of-line blocking, what cache headers mean, why CORS preflights, and how cookies/JWT auth
+flow. No memorizing header lists — you reason about reuse and freshness.
+
+---
+
+## Learning Objectives
+
+1. Read a request/response as method+headers+body / status+headers+body; know key status classes.
+2. Explain HTTP/1.1 vs 2 vs 3 as connection-reuse improvements.
+3. Explain caching headers (`Cache-Control`, `ETag`) as freshness vs revalidation.
+4. Explain CORS, cookies (SameSite/HttpOnly), and JWT vs session auth at a flow level.
+
+---
+
+## Key Mental Models
+
+- **Request = method + URL + headers + body.** Method conveys intent (GET read, POST create…).
+- **Connection reuse** is the perf story: 1.1 keep-alive → 2 multiplexing → 3 QUIC/UDP.
+- **Caching** = "don't ask again": `max-age` (fresh window) + `ETag`/`If-None-Match` (revalidate).
+- **CORS** is the browser enforcing the same-origin policy with the server's permission headers.
+
+---
+
+## Introduction
+
+Frontend interviews increasingly probe the network because the slow part of most apps is the
+wire, not React. You'll be asked "what happens when you type a URL," "explain CORS," "how does
+caching work," and "session vs JWT." All flow from the message/connection/cache model.
+
+---
+
+## Problem & request anatomy
+
+```
+REQUEST                                  RESPONSE
+GET /contacts?page=2 HTTP/2              HTTP/2 200 OK
+Host: app.a product company.com                Content-Type: application/json
+Accept: application/json                Cache-Control: max-age=60
+Authorization: Bearer <token>           ETag: "ab12"
+Cookie: session=...                      <body: JSON>
+(no body for GET)
+```
+
+- **Methods:** GET (read, cacheable, no body), POST (create/side-effects), PUT/PATCH (update),
+  DELETE. "Safe" = no side effects (GET/HEAD); "idempotent" = same result if repeated (GET, PUT,
+  DELETE — not POST).
+- **Status classes:** 2xx ok (200, 201, 204), 3xx redirect/cache (301, 304 Not-Modified),
+  4xx client error (400, 401 unauth, 403 forbidden, 404, 429 rate-limit), 5xx server error.
+
+---
+
+## Connection reuse: HTTP/1.1 → 2 → 3
+
+```mermaid
+flowchart TB
+  subgraph h1["HTTP/1.1"]
+    a["1 request at a time per connection<br/>(keep-alive reuses the TCP conn,<br/>but responses queue — head-of-line blocking)"]
+  end
+  subgraph h2["HTTP/2"]
+    b["MULTIPLEXING: many streams over ONE TCP conn<br/>+ header compression + server push<br/>(fixes HTTP-level head-of-line blocking)"]
+  end
+  subgraph h3["HTTP/3"]
+    c["runs over QUIC (UDP), not TCP<br/>→ removes TCP-level head-of-line blocking,<br/>faster connection setup"]
+  end
+  h1 --> h2 --> h3
+```
+
+- **1.1**: persistent connections (keep-alive) avoid re-handshaking, but a slow response blocks
+  the ones behind it on that connection (head-of-line blocking) → browsers opened ~6 connections.
+- **2**: multiplex many concurrent streams over one connection + compress headers. Fixes HTTP-
+  level HOL, but a lost TCP packet still stalls all streams (TCP-level HOL).
+- **3**: QUIC over UDP gives independent streams, so packet loss on one doesn't stall others, plus
+  faster (0/1-RTT) setup.
+
+---
+
+## Caching — don't ask again
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant S as Server
+  Note over B: 1st request
+  B->>S: GET /logo.png
+  S-->>B: 200 + Cache-Control: max-age=3600 + ETag "x1"
+  Note over B: within 3600s → serve from cache, NO request (fresh)
+  Note over B: after 3600s → revalidate
+  B->>S: GET /logo.png  If-None-Match: "x1"
+  S-->>B: 304 Not Modified (no body) → reuse cached copy
+```
+
+- **`Cache-Control: max-age=N`** — fresh for N seconds; serve from cache, no network. (`no-store`
+  = never cache; `no-cache` = cache but always revalidate first; `immutable` = never revalidate.)
+- **Revalidation:** when stale, send `If-None-Match: <ETag>` (or `If-Modified-Since`); server
+  replies **304** (reuse, no body) or 200 with fresh data. This is the same stale-while-revalidate
+  idea TanStack Query (Ch 10) does at the app layer.
+- **CDN** = cache copies near users (edge) so requests don't travel to origin.
+
+---
+
+## CORS — the browser's cross-origin rules
+
+Same-origin policy: by default JS can't read responses from a *different origin* (scheme+host+
+port). CORS is how a server **opts in** to allow it.
+
+```mermaid
+sequenceDiagram
+  participant B as Browser (app.com)
+  participant S as api.other.com
+  Note over B: "non-simple" request (custom headers / PUT / JSON+auth)
+  B->>S: OPTIONS (preflight): Access-Control-Request-Method/Headers
+  S-->>B: 200 + Access-Control-Allow-Origin: app.com + Allow-Methods/Headers
+  B->>S: actual request (only if preflight allowed it)
+  S-->>B: response + Access-Control-Allow-Origin
+```
+
+- **Preflight** (`OPTIONS`) happens for non-simple requests (methods beyond GET/POST, custom
+  headers, JSON content-type) — the browser asks "am I allowed?" before sending.
+- CORS is enforced **by the browser**, for reading responses — it's not server-side security
+  (a non-browser client ignores it). A common interview clarification.
+
+---
+
+## Auth flows: cookies/sessions vs JWT
+
+- **Session cookie:** server stores session state, sends a `Set-Cookie`; browser auto-sends it on
+  every same-site request. Stateful (server must look it up), easy to revoke. Secure it with
+  `HttpOnly` (JS can't read it → XSS-safe), `Secure` (HTTPS only), `SameSite` (CSRF defense,
+  Ch 14).
+- **JWT (token):** server signs a token containing claims; client stores and sends it
+  (`Authorization: Bearer`). Stateless (server verifies the signature, no lookup), scales well,
+  but hard to revoke before expiry → use short-lived access tokens + refresh tokens.
+- **Where to store a JWT?** (Ch 14 covers the tradeoff.) `localStorage` is XSS-readable;
+  `HttpOnly` cookie is XSS-safe but needs CSRF protection. There's no free lunch.
+
+**Real-time:** **WebSocket** = persistent bidirectional connection (chat, live updates);
+**SSE** (Server-Sent Events) = one-way server→client stream over HTTP (simpler, auto-reconnect);
+**polling** = repeated requests (simple, wasteful). The contacts table's real-time status (Ch 08)
+would use WS or SSE.
+
+---
+
+## Interview Discussion (reason first)
+
+**Q1. "What does HTTP/2 improve over 1.1?"**
+> "Multiplexing: many concurrent streams over one TCP connection, so requests don't queue behind
+> each other (fixes HTTP-level head-of-line blocking), plus header compression. 1.1 reused the
+> connection (keep-alive) but served responses serially. HTTP/3 goes further with QUIC over UDP to
+> kill TCP-level HOL and speed up setup."
+
+**Q2. "Explain CORS and preflight."**
+> "Same-origin policy blocks JS from reading cross-origin responses unless the server opts in via
+> `Access-Control-Allow-*` headers. For non-simple requests the browser first sends an OPTIONS
+> preflight to check it's allowed. It's browser-enforced for response reading — not a server
+> firewall."
+
+**Q3. "Session vs JWT?"**
+> "Sessions are stateful (server stores them, easy to revoke, cookie auto-sent); JWTs are
+> stateless (signed claims, server just verifies, scales, but hard to revoke — so short access +
+> refresh tokens). Cookie storage with HttpOnly+SameSite is safer against XSS than localStorage."
+
+*Scoring:* full = multiplexing/HOL + browser-enforced CORS + stateful-vs-stateless auth.
+
+---
+
+## Common Mistakes
+
+- **Thinking CORS is server security** — it's browser-enforced response-read protection.
+- **Confusing `no-cache` (revalidate) with `no-store` (never cache).**
+- **Storing JWTs in localStorage** without acknowledging XSS exposure (Ch 14).
+- **Polling when SSE/WebSocket fits** — wastes requests/battery.
+- **Assuming GET can have side effects** — it should be safe/cacheable.
+
+---
+
+## Interview Questions
+
+1. Walk "what happens when you fetch /contacts" from DNS to rendered, naming caching + connection.
+2. HTTP/1.1 vs 2 vs 3 — what HOL problem does each address?
+3. Draw the CORS preflight; what triggers it and who enforces it?
+4. `Cache-Control: max-age` vs `ETag`/304 — how do they combine?
+5. Session vs JWT; where would you store the token and what's the tradeoff?
+
+---
+
+## Homework
+
+1. In DevTools Network: find a 304, read `Cache-Control`/`ETag` on a static asset, and watch a
+   CORS preflight (`OPTIONS`) on a cross-origin API call.
+2. Compare HTTP/2 vs 1.1 waterfall for a page with many small assets (Protocol column).
+3. In `NOTES.md`: connection-reuse ladder (1.1→2→3), cache vs revalidate, session vs JWT — one
+   line each.
+
+---
+
+## Summary
+
+- A request is a **message (method+headers+body)** over a **connection**, with a typed response.
+- **Connection reuse** is the perf arc: 1.1 keep-alive (serial) → 2 multiplexing (fixes HTTP HOL)
+  → 3 QUIC/UDP (fixes TCP HOL + faster setup).
+- **Caching** avoids requests: `Cache-Control: max-age` (fresh) + `ETag`/304 (revalidate) — the
+  wire-level version of stale-while-revalidate (Ch 10); CDNs cache at the edge.
+- **CORS** is the browser enforcing same-origin, with server opt-in headers and a preflight for
+  non-simple requests — not server-side security.
+- **Auth:** sessions (stateful, revocable, cookie) vs JWT (stateless, scalable, short-lived +
+  refresh); cookie `HttpOnly`/`SameSite` matter for XSS/CSRF (Ch 14). Real-time: WS / SSE / poll.
+
+## Go deeper
+Ch 14 (security: where these headers defend XSS/CSRF), Ch 10 (app-level caching). MDN's HTTP
+docs are the reference once this model is solid.

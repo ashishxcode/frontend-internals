@@ -1,0 +1,371 @@
+---
+title: "Hook Internals & Stale Closures"
+chapter: "05"
+part: "React Internals"
+description: "Hook mechanics, stale closures, custom hooks"
+---
+
+
+> Builds on Ch 01 (closures capture a *cell*), Ch 03 (render = snapshot), Ch 04 (the Fiber is
+> the per-component record). This chapter is where those three pay off together.
+
+---
+
+## The one mental model
+
+> **A hook is not magic state inside your function. It's a slot in an ordered list that lives
+> on the component's Fiber. On every render React walks that list in the SAME ORDER and hands
+> you back slot #1, slot #2, slot #3… Your component closes over the values it read this
+> render — so a hook value is a snapshot, and a function defined in this render "remembers"
+> this render's snapshot forever (that's a stale closure).**
+
+From this one picture you can derive *every* hook rule: why hooks can't go in `if`, why deps
+arrays exist, why `useRef` is the escape hatch, and why your `setInterval` logs the same old
+`count` forever. We derive them — no memorizing "the rules of hooks."
+
+---
+
+## Learning Objectives
+
+1. Explain where hook state actually lives and why order matters (derive Rules of Hooks).
+2. Re-derive the **stale closure** bug from Ch 01 and fix it three ways, knowing the tradeoffs.
+3. Explain `useRef` as "a box whose identity is stable across renders" and when to reach for it.
+4. Explain what a dependency array *is* (a memo key) and why a wrong one causes stale reads.
+
+---
+
+## Key Mental Models
+
+- **Hooks = ordered slots on the Fiber, matched by call index.** No names, just position.
+- **Every render is a fresh function call** (Ch 03): new local consts, new closures. Values
+  from `useState`/props are this render's snapshot.
+- **A closure freezes the render it was born in.** An effect/handler/timer callback sees the
+  variables of the render that created it — not "the latest."
+- **`useRef` returns the same object every render.** Mutating `ref.current` doesn't re-render
+  and isn't a snapshot — it's the deliberate hole in the snapshot model.
+
+---
+
+## Introduction
+
+Hooks feel like the function "has memory." It doesn't — the *Fiber* has memory, and the
+function is re-run from scratch each render, reading its slots. Once you see that, the famous
+gotchas stop being trivia. The eng-head favourite — "your `useEffect` set up an interval that
+logs `count`, why is it stuck at 0?" — is literally the Ch 01 closure simulation wearing a
+React costume.
+
+---
+
+## Problem
+
+Why can't hook state just be normal variables in the function? Because the function returns and
+its frame is destroyed every render (Ch 01) — locals can't survive. So state must live
+*outside* the call, on something persistent: the Fiber. But then React needs to know *which*
+`useState` call maps to *which* stored slot across renders. It has no variable names to go by
+(they're just function calls). The cheapest reliable key is **call order**.
+
+```mermaid
+flowchart LR
+  subgraph Fiber["Component Fiber (persists across renders)"]
+    h0["slot 0: useState count"]
+    h1["slot 1: useState name"]
+    h2["slot 2: useEffect deps+cleanup"]
+  end
+  R1["render #1: hook calls in order 0,1,2"] --> Fiber
+  R2["render #2: SAME order 0,1,2"] --> Fiber
+```
+
+That single design choice — *map by order* — forces the Rules of Hooks. If you put a hook in
+an `if`, the call order changes between renders, and slot 1 of render #2 lines up with slot 2
+of render #1. The state gets cross-wired. So: **no hooks in conditionals/loops/early returns**
+— not an arbitrary rule, a direct consequence of "matched by position."
+
+---
+
+## Engine Simulation — a minimal hook implementation
+
+This ~15-line model is the whole secret. Build it in your head:
+
+```js
+let slots = [];        // lives on the Fiber in real React
+let cursor = 0;
+
+function useState(initial) {
+  const i = cursor;                          // capture THIS call's slot index
+  slots[i] = slots[i] ?? initial;            // first render seeds it
+  const setState = (next) => {
+    slots[i] = typeof next === "function" ? next(slots[i]) : next;
+    scheduleRender();                         // re-run component
+  };
+  cursor++;                                   // next hook gets next slot
+  return [slots[i], setState];
+}
+
+function renderComponent() {
+  cursor = 0;                                 // reset cursor EACH render
+  return Component();                         // hooks consume slots 0,1,2... in order
+}
+```
+
+Trace two `useState` calls across two renders:
+
+```
+render #1: cursor 0 → count slot0=0 ; cursor 1 → name slot1="" ; cursor→2
+   user clicks setCount(5): slots[0]=5, scheduleRender
+render #2: cursor 0 → count slot0=5 ; cursor 1 → name slot1="" ; cursor→2
+```
+
+Now see the bug an `if` causes:
+
+```
+render #1: useState A (slot0), if(cond) useState B (slot1), useState C (slot2)
+render #2: cond=false → useState A (slot0), useState C (slot1)  ← C now reads B's old slot!
+```
+
+State corruption, exactly as predicted by "matched by position." That's why ESLint screams.
+
+---
+
+## The stale closure — Ch 01, in a React costume
+
+```js
+function Timer() {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      console.log(count);      // ❓ always logs 0
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);                      // empty deps → effect runs ONCE
+
+  return <button onClick={() => setCount(count + 1)}>{count}</button>;
+}
+```
+
+Derive it. The effect ran during render #1. The arrow `() => console.log(count)` is a closure
+born in render #1, so it captured render #1's `count` cell = `0` (Ch 01: closures capture the
+*cell of that scope*). `setCount` makes new renders with new `count` cells, but the interval
+still holds the **first** closure → logs `0` forever.
+
+```
+render#1 count=0 ──▶ interval callback closes over count(0)  ⟲ ⟲ ⟲ logs 0,0,0...
+render#2 count=1     (new closure exists, but interval still runs the old one)
+render#3 count=2
+```
+
+**Three fixes, each derived (know the tradeoffs — classic follow-up):**
+
+1. **Functional updater** — stop reading the captured snapshot:
+   ```js
+   setInterval(() => setCount(c => c + 1), 1000);   // React feeds the latest c
+   ```
+   Best when you only need to *update*, not *read* for side effects.
+
+2. **Honest deps** — let the effect re-subscribe with a fresh closure each time `count` changes:
+   ```js
+   useEffect(() => {
+     const id = setInterval(() => console.log(count), 1000);
+     return () => clearInterval(id);
+   }, [count]);    // new closure per count; cleanup tears down the stale one
+   ```
+   Correct, but re-creates the interval each tick of state.
+
+3. **Ref escape hatch** — keep a mutable box the callback reads live:
+   ```js
+   const countRef = useRef(0);
+   countRef.current = count;                 // updated every render
+   useEffect(() => {
+     const id = setInterval(() => console.log(countRef.current), 1000);
+     return () => clearInterval(id);
+   }, []);
+   ```
+   `useRef` returns the *same object* every render, so `.current` isn't a snapshot — it reads
+   whatever the latest render wrote. This is what refs are *for*.
+
+---
+
+## React Internals
+
+- Hooks live as a **linked list** on the Fiber (`fiber.memoizedState`), not a literal array,
+  but "ordered slots matched by call index" is the exact mental model.
+- `useState` is `useReducer` with a built-in reducer; both store an update queue per slot
+  (Ch 03's queue lives per hook).
+- `useMemo(fn, deps)` / `useCallback(fn, deps)` store `[value, deps]` in the slot; on re-render
+  they `Object.is`-compare each dep — if all equal, return the cached value (stable identity,
+  Ch 01 reference model); else recompute. **Deps array = a cache key.**
+- `useEffect` stores the effect + its deps + cleanup. After commit, React compares deps; if
+  changed, it runs the previous cleanup then the new effect. Empty deps = "key never changes" =
+  run once. Wrong deps = "key claims nothing changed" = stale closure.
+- `useLayoutEffect` is the same but fires synchronously before paint (Ch 07) — for measuring
+  DOM / avoiding flicker.
+
+---
+
+## Interview Discussion (reason first)
+
+**Q1. "Why can't hooks go inside an `if`?"**
+
+*Plausible-but-wrong:* "Because React said so / it's a style rule."
+
+*Correction:* Because hook state is matched by **call order**, not name. A conditional hook
+changes the order between renders, so slot indices shift and one hook reads another's state.
+Show the slot trace. The rule is a *consequence* of the storage design.
+
+*Model answer:* "Hooks are positional slots on the Fiber. Conditionals change call order →
+slots misalign across renders → corrupted state. So they must run unconditionally, top level."
+
+**Q2. "Interval logs stale `count`. Why, and fix it three ways with tradeoffs."**
+
+*Model answer:* the closure-from-render-1 explanation above + functional updater (update-only),
+honest deps (re-subscribes), ref (live read). Naming the tradeoff is what scores SDE-2.
+
+**Q3. "What's `useRef` actually for, beyond DOM nodes?"**
+
+*Model answer:* "A stable, mutable box that survives renders without causing one and without
+being a snapshot. Two uses: holding a DOM node, and holding mutable values you want to read
+'live' inside closures/timers — the deliberate escape from the snapshot model."
+
+*Scoring:* full = positional slots + closure capture + ref-as-escape-hatch. Fail = "use
+useCallback to fix stale closures" with no mechanism.
+
+---
+
+## Common Mistakes
+
+- **Hooks in conditionals/loops/after early `return`.** Breaks positional matching.
+- **Lying in the deps array** (omitting a used value to "run once"). It doesn't run once — it
+  runs with a stale closure. If you truly want once, prove the value can't matter, or use a ref.
+- **Putting non-reactive mutable state in `useState`** (causes needless renders) instead of
+  `useRef`.
+- **Expecting `ref.current` changes to re-render.** They don't — that's the point.
+- **`useCallback`/`useMemo` everywhere.** They have a cost (store + compare deps). Only worth it
+  when identity stability actually prevents work (memoized child, effect dep) — Ch 08.
+
+---
+
+## Interview Questions
+
+1. Implement `useState` in ~15 lines. Where does the slot live? Why reset the cursor each render?
+2. Show the slot misalignment a conditional hook causes, render #1 vs #2.
+3. Given the stale-interval bug, give all three fixes and say when you'd pick each.
+4. What does the deps array *do* internally for `useEffect` vs `useMemo`? Why is a wrong deps
+   array a correctness bug, not just a perf one?
+5. Why doesn't mutating `ref.current` re-render, and why is that useful?
+
+---
+
+## Homework
+
+1. Type the 15-line `useState` and run two components off one module-level `slots` array;
+   observe why React actually needs per-Fiber storage (they'd collide).
+2. Reproduce the stale-interval bug, then apply each of the three fixes; add a render-count log
+   to see which fix re-subscribes.
+3. Write a `usePrevious(value)` custom hook using a ref and explain, in `NOTES.md`, why a ref
+   (not state) is the right tool.
+
+---
+
+## Summary
+
+- **Hooks are ordered slots on the Fiber, matched by call index** — that single fact derives
+  the Rules of Hooks.
+- **Each render is a fresh call**; hook/prop values are that render's snapshot (Ch 03), and any
+  function born in that render closes over that snapshot (Ch 01) → **stale closures**.
+- Fix stale reads by not depending on the snapshot (**functional updater**), by **honest deps**
+  (re-subscribe with a fresh closure), or by a **ref** (live, mutable, non-snapshot box).
+- **Deps arrays are cache keys.** `useMemo`/`useCallback` return cached identity when deps are
+  `Object.is`-equal — the Ch 01 reference model is why they exist.
+- **`useRef`** is the intentional escape hatch from the snapshot model.
+
+---
+
+# ═══ Internals Deep-Dive (source-verified) ═══
+
+> Verified against `facebook/react` v19.2.0 — `react-reconciler/src/ReactFiberHooks.js`. The
+> "ordered slots" model above is exactly right; here is the real data structure and dispatcher.
+
+## A. The real `Hook` object — a linked list, not an array
+
+The chapter's "slots array" is implemented as a **singly linked list** hanging off the fiber's
+`memoizedState` (Ch 04). The actual type:
+
+```js
+type Hook = {
+  memoizedState: any,        // this hook's current committed value
+  baseState: any,            // state before priority-skipped updates were applied
+  baseQueue: Update | null,  // updates carried over because higher-priority work jumped ahead
+  queue: any,                // the UpdateQueue (state/reducer) or effect/ref payload
+  next: Hook | null,         // → next hook in this fiber's list
+};
+```
+
+`baseState`/`baseQueue` exist because of lanes (Ch 04): when a high-priority update is processed
+before a low-priority one queued earlier, React must replay from a consistent base later — so it
+stashes the skipped updates. That's invisible in the simple "slots" model but is why the real
+Hook has four fields, not one.
+
+## B. The dispatcher — mount vs update (`renderWithHooks`)
+
+There's no `if (firstRender)` inside `useState`. Instead React swaps the **entire dispatcher**
+before calling your component:
+
+```js
+ReactSharedInternals.H =
+  current === null || current.memoizedState === null
+    ? HooksDispatcherOnMount     // useState → mountState, useEffect → mountEffect, …
+    : HooksDispatcherOnUpdate;   // useState → updateState (= updateReducer(basicStateReducer))
+```
+
+- **Mount:** `mountWorkInProgressHook()` allocates a fresh `Hook` and **appends** it (call order).
+- **Update:** `updateWorkInProgressHook()` **walks the alternate fiber's hook list via
+  `currentHook.next`**, cloning each. This traversal is *strictly positional* — there are no
+  names/keys — so the Nth `useX()` this render must line up with the Nth hook last render.
+  **That is the mechanical reason for the Rules of Hooks** (Ch-05's core claim), and the source of
+  the dev warning *"React has detected a change in the order of Hooks."*
+
+> Version flag: `ReactSharedInternals.H` is the **React 19** name; it was
+> `ReactCurrentDispatcher.current` in 17/18. Same mechanism.
+
+## C. The update queue — a circular linked list + eager-state bailout
+
+`mountState` builds the queue and binds the setter:
+
+```js
+const queue = { pending: null, lanes: NoLanes, dispatch: null,
+                lastRenderedReducer: basicStateReducer, lastRenderedState: initialState };
+queue.dispatch = dispatchSetState.bind(null, currentlyRenderingFiber, queue);
+```
+
+`dispatchSetState` appends an `Update` to `queue.pending` as a **circular singly-linked list**
+(`pending` points at the *last* node; `pending.next` is the first). On the next render,
+`updateReducer` walks that ring applying each update to produce the new state — *this* is the
+queue the Ch-03 "double increment" walks over.
+
+**Eager-state bailout:** if the queue is empty when you call the setter, React computes the next
+state *eagerly* right there and, if `Object.is(eagerState, currentState)`, **skips scheduling a
+re-render entirely**. That's why `setState` to the same value is effectively free (ties to Ch 03
+"setState always schedules" — with this one early-out).
+
+## D. `useSyncExternalStore` & tearing (why concurrency needed a new hook)
+
+**Tearing** (reactwg/react-18 #69): "a UI has shown multiple values for the same state." It only
+becomes possible *with concurrent rendering* (Ch 04) — React can pause mid-render, an external
+store mutates during the pause, and later-rendered components read the new value while
+earlier-rendered ones already used the old → two values for one state, on screen at once. Pre-18
+synchronous rendering couldn't tear.
+
+`useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot?)` prevents it. Internally
+(`ReactFiberHooks.js`): it reads the store **on every render** ("only works because store updates
+are always synchronous"), and for non-blocking lanes it `pushStoreConsistencyCheck` (sets a
+`StoreConsistency` flag). Right before commit, `isRenderConsistentWithExternalStores` **re-reads
+every store's `getSnapshot()` and compares**; on mismatch it re-renders **synchronously** to block
+further mutation. Store change notifications force `SyncLane`. This is why Redux and Zustand
+adopted it for React 18 safety. (`getSnapshot` results are compared with `Object.is` — return a
+*stable* reference or it loops; ties to Ch 01 referential identity.)
+
+## Go deeper
+Source: `facebook/react` v19.2.0 `ReactFiberHooks.js`; reactwg/react-18 #69 (tearing) & #86
+(useSyncExternalStore). Ch 04 (the fiber these hang on, lanes behind baseQueue), Ch 08 (when
+memo pays off), Ch 21 (external stores). The React docs "Removing Effect Dependencies" is the
+practical companion.
