@@ -7,21 +7,25 @@ description: "Machine-coding playbook, system design framework"
 
 > Prerequisites: all preceding chapters. This chapter synthesizes them. Core: architecture and state (Ch 11), TanStack Query (Ch 10), rendering and perf (Ch 08), a11y (Ch 23), testing (Ch 15). Pair with the interview guide (your interviewer's real flow) and the topic map (JD to topics).
 
-## Problem
+## The Problem You Recognize
 
 You sit down for a machine-coding round. You have 45 minutes. The prompt is vague. You start coding immediately. You build the happy path. You run out of time. You never handled loading state, empty state, or error state. You did not mention accessibility or performance. The interviewer cannot see your reasoning because you coded silently. You fail even though your solution worked for the default case.
 
-## Why Existing Solution Failed
+Sound familiar? It's happened to almost every developer. You leave thinking, "But my code worked!" — and it did, but that's not what they were measuring.
+
+## Why Most People Fail This
 
 Coding before clarifying solves the wrong problem. Silent solving hides your reasoning. Happy-path-only coding misses loading, empty, error, and edge cases. Over-generalizing to trap questions ("memo everything," "yes") shows lack of judgment. Not covering a11y or performance until prompted shows narrow thinking. Rambling project stories waste time and miss the point. These are all learned behaviors from practicing alone without feedback.
 
-## Mental Model
+Think of it like this: you wouldn't build a house without checking the foundation first. Interviews are the same — they want to see you checking the foundation before you pour concrete.
+
+## The One Thing That Changes Everything
 
 Interviews score your reasoning, not your answer. Narrate the tradeoff out loud. For any UI problem cover the four states: loading, empty, error, data. Plus accessibility and performance. The interviewer is asking "can I trust this person to own a feature end-to-end?" Show the thinking: clarify, propose, name the tradeoff, handle the edges. A confident structured walk beats a perfect silent solution.
 
 From "they score reasoning plus four states" you learn how to run machine-coding (talk while you build, handle edges) and frontend system design (a repeatable framework). You understand why "it depends, here is the tradeoff" is a strong answer, not a weak one.
 
-## Visualization
+## The Framework You Can Use Tomorrow
 
 Frontend system-design framework:
 
@@ -40,7 +44,7 @@ flowchart TD
   x -.- x1["a11y (Ch 23), perf budget (Ch 08), errors (Ch 22), tradeoffs out loud"]
 ```
 
-## Engine Simulation
+## Walk Through It Step by Step
 
 Walk an autocomplete machine-coding session minute by minute.
 
@@ -58,7 +62,7 @@ Minute 35-40: Performance pass. Add keys to list items. Memo only if measured sl
 
 Minute 40-45: Say what you would add with more time. Unit tests for the debounce hook. Integration tests for the dropdown. More a11y testing.
 
-## Internal Implementation
+## How They Actually Score You
 
 The interviewer's scoring rubric evaluates four dimensions. Reasoning: did you clarify before coding, state tradeoffs, show your thinking? Completeness: did you cover loading, empty, error, data plus a11y and perf? Communication: was your narration clear and structured? Judgment: did you avoid over-generalizing, make reasonable tradeoffs, know when to optimize?
 
@@ -70,7 +74,7 @@ Interviewer asks "design a contacts table page." The prompt is two sentences. Th
 
 The trap question: "Should you memoize every component?" The candidate who says "yes" fails. The candidate who answers "No. useMemo has a cost. I memo only measured hot spots. Most re-renders are cheap. Premature optimization adds complexity without benefit." This shows judgment and understanding of tradeoffs.
 
-## Tradeoffs
+## The Tradeoff You Need to Understand
 
 Speed vs completeness. In a 45-minute session, you cannot build a production app. The tradeoff is covering breadth of concerns (loading, empty, error, data, a11y, perf) vs depth of implementation in one area. Breadth wins interviews because it shows you think end-to-end.
 
@@ -78,7 +82,7 @@ Narration vs focus. Talking through your reasoning takes time from coding. But s
 
 Preparing STAR stories vs practicing coding. Both matter. STAR stories show behavioral fit. Coding shows technical ability. Spend 70% of prep time on coding and 30% on stories.
 
-## Common Mistakes
+## Where People Get Stuck
 
 - Coding before clarifying. You solve the wrong problem.
 - Only the happy path. No loading, empty, or error states.
@@ -87,7 +91,7 @@ Preparing STAR stories vs practicing coding. Both matter. STAR stories show beha
 - Forgetting a11y or perf until prompted. Bring them up unprompted.
 - Rambling project pitch. Keep it 30 seconds and scoped.
 
-## SDE-2 Interview Answer
+## What You Sound Like in the Interview
 
 **Mid-level variant:**
 "For any UI problem, I cover loading, empty, error, and data states. I clarify the prompt before coding. I narrate my reasoning as I build. I add keyboard support and basic a11y. I handle the trap questions with a tradeoff: X has a cost, I apply it only when needed."
@@ -98,17 +102,27 @@ Preparing STAR stories vs practicing coding. Both matter. STAR stories show beha
 **Engineering Lead variant:**
 "I prepare my team for interviews with a repeatable structure. We practice the autocomplete and contacts table until the checklist is automatic. We review each other's STAR stories against the job description. The key insight I teach is: interviews score reasoning, not perfection. Clarifying, stating tradeoffs, and handling edges matters more than a flawless solution. I also ensure the team understands the scoring rubric so they know where to focus."
 
-## Follow-up Questions
+## Practice These Five
 
 1. Build an autocomplete with debounce, cancel, four states, keyboard support, and a11y. Narrate throughout.
 
+Start by clarifying: "Is this remote search or local filter? How many items? Keyboard support required?" State your assumptions. Shape state: input value (local), debounced value (custom hook or `useDeferredValue`), results array, and status as a discriminated union (`idle | loading | error | success`). Build the happy path: onChange updates input, a debounced effect calls the API, store results in state. Add the four states: loading shows a skeleton, empty shows "No results found", error shows retry button, data renders the list. Add edges: 300ms debounce, cancel stale requests with AbortController (or TanStack Query's built-in cancellation), keyboard support (Up/Down to navigate, Enter to select, Escape to close), click-outside to close. Add `aria-expanded`, `role="listbox"`, and `role="option"` for accessibility. Highlight matching text in each result. Mention what you'd add with more time: unit tests for debounce, integration tests for dropdown behavior, more a11y testing with screen readers.
+
 2. Design the contacts table using the framework. Hit real-time, multi-select, and virtualization.
+
+Walk the 6-step framework. **Clarify:** How many contacts? Real-time updates? Multi-select needed? What actions on selected rows? **Data layer:** Paginated API with cursor-based pagination. TanStack Query with `useInfiniteQuery` for infinite scroll. Query key includes filters and sort params. **Rendering:** Virtualize with react-virtual since 500K rows can't be DOM-mounted. Show loading skeleton, empty state, error with retry, and data. **State:** Search text is local. Filters go to the parent page. Sort goes to URL params. Selection state uses a `Set` of IDs in local state or Zustand if cross-page selection is needed. **Real-time:** WebSocket pushes status changes. Patch individual rows with `setQueryData` so only visible rows re-render. **Cross-cuts:** a11y — keyboard navigation in the table, `aria-selected` on rows, skip-to-content link. Perf — virtualization is the big one, memoize row component only if measured slow. Trap: "should I memoize the whole table?" Answer: "No. Virtualization already limits DOM nodes. I memo individual rows only if profiling shows they re-render unnecessarily."
 
 3. "Should you memoize every component?" Answer the trap correctly.
 
+No. `useMemo` and `useMemo` have a cost — they store previous results in memory, they run on every render to check dependencies, and they add code complexity. Most re-renders are cheap and fast. The correct answer: "I memo only measured hot spots. I use React DevTools Profiler to identify components that re-render expensively or frequently with the same props. Premature optimization adds complexity without benefit. For most components, the re-render cost is negligible. I also consider whether the component receives new object references on every render — if the parent creates a new object inline, memoizing the child won't help unless I also stabilize the parent's references with `useMemo` or by moving state down."
+
 4. Tell an end-to-end ownership story in STAR format. Two minutes or less.
 
+**Situation:** "We had a contacts table with 200K rows that loaded slowly, had no search, and crashed on status updates because every mutation refetched the entire dataset." **Task:** "I owned the feature end-to-end — data fetching, UI, performance, and accessibility." **Action:** "I replaced the hand-rolled fetch with TanStack Query for caching. Added cursor-based pagination with `useInfiniteQuery`. Implemented a virtualized list with react-virtual so only visible rows rendered. Built optimistic status updates with cancel/snapshot/patch/rollback. Added keyboard navigation and ARIA attributes for accessibility. Set up MSW for integration tests covering loading, error, and success states." **Result:** "Initial load dropped from 4 seconds to 200ms. Status updates were instant with optimistic UI. The test suite covered all four states. The team adopted the pattern as a template for other list views."
+
 5. Design a notifications dropdown with unread counts and live updates.
+
+Follow the framework. **Clarify:** Frequency of notifications? Do users dismiss or just mark read? Unread count badge needed? **Data layer:** `GET /notifications` with pagination, `GET /notifications/unread-count` as a lightweight endpoint. TanStack Query caches both. **Rendering:** Dropdown renders a list. Four states: loading skeleton, empty "No notifications", error with retry, data list. Virtualize if 100+ items. **State:** Dropdown open/close is local `useState`. Read/unread filters use the query key. **Real-time:** SSE or WebSocket pushes new notifications. `setQueryData` prepends the new notification to the cache and increments the unread count. If the dropdown is open, the list updates instantly without a refetch. **Cross-cuts:** a11y — `aria-expanded` on the bell icon, `role="menu"` on the list, arrow keys navigate, Escape closes, Enter activates. Perf — virtualize long lists, debounce mark-all-read. Unread count is either derived from the cached list or a separate lightweight endpoint that's cheaper to poll.
 
 ## Mental Trigger
 

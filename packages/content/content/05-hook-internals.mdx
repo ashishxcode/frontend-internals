@@ -5,33 +5,31 @@ part: "React Internals"
 description: "Hook mechanics, stale closures, custom hooks"
 ---
 
-## Problem
+## The Problem That Keeps You Up at Night
 
-Why can hook state not just be normal variables in your function? Because the function returns and its local frame is destroyed. Each render calls the component from scratch. Variables vanish.
+You've hit this. You write a `setInterval` inside `useEffect`, the count should tick up every second, but it just logs `0` forever. Or you add a conditional hook and suddenly your state is scrambled. You think, "this is a bug in React," but it's not. It's a direct consequence of a single design choice: React matches hooks by **call order**.
 
-State must live outside the call, on something persistent. React uses the Fiber (Ch 04). But then React needs to know which `useState` call maps to which stored slot. It has no variable names. Function calls have no names. The cheapest reliable key is call order.
+Think of it like this. Every component render is a fresh function call. Local variables die when the function returns. So where does React stash your `useState` values? Outside the function, on the Fiber. But React can't see your variable names — it can only see that you called `useState` three times, in that order. So it assigns slot 0, slot 1, slot 2. That's it. No names. Just position.
 
-This single design choice, map by order, forces every hook rule. If you put a hook inside `if`, call order changes between renders. Slot 1 of render 2 lines up with slot 2 of render 1. State cross-wires. That is why hooks cannot go in conditionals, loops, or after early returns. Not an arbitrary rule. A direct result of positional matching.
+This one decision — match by position — is why hooks can't live inside `if` statements, loops, or after early returns. If you skip a hook conditionally, slot indices shift. Slot 1 of render 2 reads what was slot 2 of render 1. Your state is corrupted. Not because of some arbitrary rule. Because positional matching broke.
 
-## Why Existing Solution Failed
+## Why Existing Solutions Failed
 
-Before hooks, React had class components. State lived on `this.state`. Side effects went in lifecycle methods: `componentDidMount`, `componentDidUpdate`, `componentWillUnmount`. Logic reuse required Higher-Order Components (HOCs) or render props.
+Before hooks, React had class components. State lived on `this.state`. Side effects went into lifecycle methods: `componentDidMount`, `componentDidUpdate`, `componentWillUnmount`. Reusing logic meant Higher-Order Components or render props.
 
-Both approaches created deeply nested wrapper trees. Related logic like event subscription and cleanup was split across multiple lifecycle methods. `this` binding was error-prone. Function components could not use state or effects at all.
+Here's the pain: related logic — say, subscribing to a WebSocket and cleaning up — got split across `componentDidMount` and `componentWillUnmount`. You had to hunt through the file to find the matching pieces. HOCs and render props created deeply nested wrapper trees that were hard to debug. And `this` binding? Constant source of bugs. Function components? They couldn't use state or effects at all.
 
-Hooks solved all of this. No classes. No `this`. No wrapper hell. Related logic stays together. But hooks introduced two new failure modes: positional matching requires consistent call order, and closure capture freezes a render's values. These are the gotchas you face today.
+Hooks fixed all of this. No classes. No `this`. No wrapper hell. Related logic stays together in one place. But hooks brought two new gotchas: positional matching forces the Rules of Hooks, and closure capture freezes a render's values. That's what we deal with today.
 
-## Mental Model
+## Mental Model: The Pegboard
 
-A hook is not magic state inside your function. It is a slot in an ordered list that lives on the component's Fiber. On each render React walks that list in the same order and hands you back slot 1, slot 2, slot 3. Your component closes over the values it read this render.
+Here's one sentence that explains everything: **A hook is a numbered slot on the Fiber's pegboard, and every render walks the pegboard in the same order to grab its values.**
 
-So a hook value is a snapshot of that render. A function defined in this render "remembers" this render's snapshot forever. That is a stale closure.
+Each render is a fresh function call. New local variables. New closures. But the pegboard persists. When React calls your component again, it starts at peg 0, grabs the value, moves to peg 1, and so on. A function defined during that render — an effect callback, an event handler, a timer — closes over the values it read *this render*. It doesn't know about later renders. It's frozen in time.
 
-Key ideas:
-- Hooks are ordered slots on the Fiber, matched by call index. No names. Just position.
-- Each render is a fresh function call. New local consts. New closures.
-- A closure freezes the render it was born in. An effect, handler, or timer callback sees the variables of the render that created it, not "the latest."
-- `useRef` returns the same object every render. Mutating `ref.current` does not re-render and is not a snapshot. It is the deliberate hole in the snapshot model.
+That's a stale closure. Not a bug. An unavoidable consequence of how JavaScript closures work: a function remembers the variables that existed when it was born. If a new render creates new variables, the old function still points at the old ones.
+
+And `useRef`? That's the deliberate hole in the snapshot model. It returns the same object every render. Mutating `ref.current` doesn't re-render. It's a mutable box that lives outside the snapshot system, for when you need something that survives across renders without triggering re-renders.
 
 ## Visualization
 
@@ -73,7 +71,7 @@ function renderComponent() {
 }
 ```
 
-What happens internally: `cursor` resets to 0 at the start of each render. The first `useState` captures index 0. The second captures index 1. Each slot persists across renders because `slots` lives outside the function. When you call `setState`, it writes to the slot and triggers a new render. The new render reads the updated slot.
+Here's what happens: `cursor` resets to 0 at the start of each render. The first `useState` grabs index 0. The second grabs index 1. Each slot persists because `slots` lives outside the function. When you call `setState`, it writes to the slot and triggers a new render. The new render reads the updated slot.
 
 Trace two `useState` calls across two renders:
 
@@ -221,20 +219,72 @@ Question: "How would you design custom hook patterns for your team to minimize s
 
 ## Follow-up Questions (5, progressively harder)
 
-1. Implement `useState` in about 15 lines. Where does the slot live? Why reset the cursor each render?
-   _(Proves understanding of the slot concept.)_
+**Q1: Implement `useState` in about 15 lines. Where does the slot live? Why reset the cursor each render?**
 
-2. Show the slot misalignment a conditional hook causes. Walk through render 1 vs render 2.
-   _(Applies the model to a concrete bug.)_
+The slot lives on the Fiber node, which persists across renders. In a simplified model:
 
-3. Given the stale interval bug, give all three fixes and say when you would pick each.
-   _(Tests tradeoff awareness, not just fix memorization.)_
+```js
+let slots = [];
+let cursor = 0;
 
-4. What does the deps array do internally for `useEffect` vs `useMemo`? Why is a wrong deps array a correctness bug, not just a perf one?
-   _(Tests understanding of the mechanism behind deps.)_
+function useState(initial) {
+  const i = cursor;
+  slots[i] = slots[i] ?? initial;
+  const setState = (next) => {
+    slots[i] = typeof next === "function" ? next(slots[i]) : next;
+    scheduleRender();
+  };
+  cursor++;
+  return [slots[i], setState];
+}
 
-5. Why does mutating `ref.current` not re-render? When would you use a ref instead of state for a value that changes?
-   _(Tests the snapshot model boundary. Differentiates reactive from non-reactive state.)_
+function renderComponent() {
+  cursor = 0;
+  return Component();
+}
+```
+
+The cursor resets at the start of each render because React walks the hook list in the same positional order every time. If the cursor did not reset, the second `useState` call would grab index 1 even on the first render, skipping index 0. The slot array persists because it lives outside the component function — on the Fiber's `memoizedState` linked list. Each render re-reads the same slots, which is why state survives across renders. See Ch 03 for how the Fiber stores this linked list.
+
+**Q2: Show the slot misalignment a conditional hook causes. Walk through render 1 vs render 2.**
+
+Suppose you have this code:
+
+```jsx
+function Component({ hasFeature }) {
+  const [a, setA] = useState("A");
+  if (hasFeature) {
+    const [b, setB] = useState("B");
+  }
+  const [c, setC] = useState("C");
+}
+```
+
+Render 1 with `hasFeature = true`: hooks run in order as slots 0, 1, 2. `a` reads slot 0, `b` reads slot 1, `c` reads slot 2. Everything is fine.
+
+Render 2 with `hasFeature = false`: the conditional hook is skipped. Now `a` reads slot 0 (correct), but `c` reads slot 1 (which was `b`'s slot). `c` gets `b`'s value. Slot 2 is untouched. State is corrupted — `c` shows `B` instead of `C`. This is not a React bug. It is a direct consequence of positional matching. The ESLint `rules-of-hooks` plugin exists to catch exactly this pattern, not as a style preference but as a correctness guard.
+
+**Q3: Given the stale interval bug, give all three fixes and say when you would pick each.**
+
+The bug: `setInterval` captures render 1's `count` via closure and logs `0` forever.
+
+**Fix 1 — Functional updater:** `setInterval(() => setCount(c => c + 1), 1000)`. The updater receives the latest value from React's slot, bypassing the stale closure entirely. Pick this when you only need to update state based on its previous value and do not need to read external values inside the callback.
+
+**Fix 2 — Honest deps:** Add `[count]` to the deps array. The effect re-runs on every count change, creating a fresh closure that captures the current count. Pick this when the effect logically depends on the value (e.g., an API call that needs the current count) and re-subscription cost is acceptable.
+
+**Fix 3 — Ref escape hatch:** Store `count` in a `useRef`, update `ref.current` each render, and read `ref.current` inside the interval. The ref is the same object across renders — it is not part of the snapshot model. Pick this for intervals, timers, or any long-lived subscription where you need the latest value without re-subscribing. This is the most efficient fix for this specific pattern. See Ch 01 for why refs break the closure snapshot model.
+
+**Q4: What does the deps array do internally for `useEffect` vs `useMemo`? Why is a wrong deps array a correctness bug, not just a perf one?**
+
+Both `useEffect` and `useMemo` store their previous deps array in their hook slot. On the next render, React compares each element using `Object.is`. If all deps are equal, the hook returns the cached value (for `useMemo`) or skips running the effect (for `useEffect`). If any dep changed, `useMemo` recomputes and `useEffect` runs cleanup on the old effect then runs the new effect.
+
+A wrong deps array is a correctness bug because it tells React "nothing changed" when something did. The effect runs with a stale closure — it reads old values from a previous render's scope. For `useMemo`, it returns a stale cached value derived from old inputs. This is not a performance issue where you do too much work; it is a semantic issue where you do the wrong work. The effect may fire with outdated data, skip necessary cleanup, or return values that no longer correspond to current state. See Ch 03 for how closures capture render snapshots.
+
+**Q5: Why does mutating `ref.current` not re-render? When would you use a ref instead of state for a value that changes?**
+
+`useRef` returns the same object every render. The ref's `.current` property is a mutable field on that object, stored on the Fiber's hook slot. Unlike `useState`, which calls `scheduleRender()` when the setter fires, `useRef`'s setter is just a plain property assignment on a JS object. React has no mechanism to detect that assignment. No update is enqueued, no re-render is triggered. The value changes silently.
+
+Use a ref when you need a value that survives renders but should not cause re-renders when it changes: interval IDs, previous prop values, DOM node references, timers, WebSocket instances, or any mutable bookkeeping. Use state when the value drives the UI and the user should see it update. The rule of thumb: if changing the value should make the screen update, use state. If it is internal bookkeeping, use a ref. See Ch 04 for why the commit phase reads refs but the render phase does not re-trigger on ref changes.
 
 ## Mental Trigger
 

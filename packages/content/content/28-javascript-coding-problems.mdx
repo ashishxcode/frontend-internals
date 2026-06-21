@@ -2,28 +2,28 @@
 title: "JavaScript Coding Problems"
 chapter: "28"
 part: "Coding & Practice"
-description: "Debounce, throttle, deep clone, Promise.all, memoize"
+description: "Debounce, throttle, deep clone, Promise.all, LRU cache, Event Emitter, async iterators, curry"
 ---
 
-## Problem
+## The Problem That Hooks You
 
-You are in a coding interview. The prompt: "Implement debounce from scratch. No lodash." Or "Write your own Promise.all." Or "Deep clone this object handling all edge cases."
+You're in a coding interview. The prompt: "Implement debounce from scratch. No lodash." Or "Write your own Promise.all." Or "Deep clone this object handling all edge cases."
 
 You need to build these utilities using only raw JavaScript. No libraries. No external code. The interviewer watches how you think, not whether you memorized the solution.
 
-The real problem: most developers use lodash or utilities every day but never understood how they work internally. When asked to build them from scratch, they freeze. They do not know which JavaScript primitives to combine.
+The real problem: most developers use lodash or utilities every day but never understood how they work internally. When asked to build them from scratch, they freeze.
 
-## Why Existing Solution Failed
+## Why It Happens
 
-Using lodash or built-in methods hides the internals. You import `debounce` and it works. You use `Promise.all` and it works. You spread an object for shallow copy. These work until the interview asks you to re-derive them.
+Using lodash or built-in methods hides the internals. You import `debounce` and it works. You use `Promise.all` and it works. These work until the interview asks you to re-derive them.
 
-Memorizing code fails too. You might remember one version of debounce. But the interviewer asks about leading edge, trailing edge, cancel, or `this` binding. Your memorized version cannot adapt.
+Memorizing code fails too. You might remember one version of debounce. But the interviewer asks about leading edge, trailing edge, cancel, or `this` binding. Your memorized version can't adapt.
 
-The solution is to understand the underlying primitives. Every coding problem uses a combination of: closure, setTimeout, recursion, Promise, Map, and reduce. If you know how these work alone and together, you can build any utility from scratch.
+The solution is to understand the underlying primitives.
 
-## Mental Model
+## The One Insight
 
-Six primitives power every coding problem:
+**Six primitives power every coding problem.** If you know how these work alone and together, you can build any utility from scratch.
 
 - **Closure.** A function remembers variables from its outer scope. This is how debounce, throttle, and memoize store state across calls.
 
@@ -100,9 +100,7 @@ flowchart TB
 
 Memoize: check cache first. Hit returns O(1). Miss computes, stores, returns.
 
-## Engine Simulation
-
-Walk through each utility step by step.
+## Building Each Utility
 
 **Debounce.**
 
@@ -117,9 +115,9 @@ function debounce(fn, delay) {
 }
 ```
 
-Internally: the outer function runs once. It creates a `timer` variable. The inner function closes over `timer`. Each call to the inner function clears any pending timeout and starts a new one. Only the last call's timeout survives. When the timeout fires, `fn` runs with the correct `this` and arguments.
+The outer function runs once. It creates a `timer` variable. The inner function closes over `timer`. Each call clears any pending timeout and starts a new one. Only the last call's timeout survives. When the timeout fires, `fn` runs with the correct `this` and arguments.
 
-The `this` binding works because `fn.apply(context, args)` calls the original function with the context that was captured when the wrapper was called. Without `apply`, `this` inside `fn` would be the global object or `undefined` in strict mode.
+The `this` binding works because `fn.apply(context, args)` calls the original function with the context captured when the wrapper was called.
 
 **Throttle (trailing edge).**
 
@@ -147,7 +145,7 @@ function throttle(fn, limit) {
 }
 ```
 
-Internally: `lastCall` tracks the timestamp of the last execution. `Date.now()` gets the current time. If the difference exceeds `limit`, fire immediately. Otherwise schedule a trailing call for the remaining time. The trailing call resets `lastCall` to when it actually fired, not when it was scheduled.
+`lastCall` tracks the timestamp of the last execution. If the difference exceeds `limit`, fire immediately. Otherwise schedule a trailing call for the remaining time. The trailing call resets `lastCall` to when it actually fired, not when it was scheduled.
 
 **Deep Clone.**
 
@@ -184,7 +182,7 @@ function deepClone(value, seen = new WeakMap()) {
 }
 ```
 
-Internally: the function recurses into every value. The WeakMap `seen` tracks already-visited objects. When it encounters the same reference again (circular), it returns the cached clone instead of recursing. Each type needs different construction: Date uses `new Date(value)`, RegExp uses `new RegExp(source, flags)`, Map and Set need iteration with recursive cloning of keys and values. Arrays and plain objects copy each element or property recursively. Symbol keys require `Object.getOwnPropertySymbols()` because `Object.keys()` skips them.
+The function recurses into every value. The WeakMap `seen` tracks already-visited objects. When it encounters the same reference again (circular), it returns the cached clone instead of recursing. Each type needs different construction. Symbol keys require `Object.getOwnPropertySymbols()` because `Object.keys()` skips them.
 
 **Promise.all.**
 
@@ -211,7 +209,7 @@ function promiseAll(iterable) {
 }
 ```
 
-Internally: the function creates a new Promise. It uses `Array.from` to handle any iterable. It pre-allocates the results array so indices match the input order. `Promise.resolve(item)` wraps non-Promise values. The `.then()` has two callbacks: on fulfillment, store the value and increment the counter. When all complete, resolve with results. The reject handler is passed directly as the second argument to `.then`. This makes the promise reject immediately on the first error, no waiting for others.
+Pre-allocates the results array so indices match input order. `Promise.resolve(item)` wraps non-Promise values. The reject handler is passed directly — this makes the promise reject immediately on the first error, no waiting for others.
 
 **Memoize with LRU.**
 
@@ -237,7 +235,7 @@ function memoizeLRU(fn, maxSize = 100) {
 }
 ```
 
-Internally: the Map stores cached results in insertion order. On cache hit, the entry is deleted and re-inserted, moving it to the end (most recently used). On cache miss, the result is computed and stored. If the cache exceeds `maxSize`, the first entry (oldest, least recently used) is deleted. `JSON.stringify(args)` converts arguments to a string key. This works for primitives and plain objects but fails for undefined, functions, Symbols, and circular references.
+The Map stores cached results in insertion order. On cache hit, the entry is deleted and re-inserted, moving it to the end (most recently used). On cache miss, the result is computed and stored. If the cache exceeds `maxSize`, the first entry (oldest, least recently used) is deleted.
 
 **Array Utilities.**
 
@@ -276,8 +274,6 @@ function chunk(arr, size) {
 }
 ```
 
-Internally: flatten recurses or iterates with a stack, checking `Array.isArray` at each element. groupBy uses `reduce` to accumulate into an object keyed by the key function result. unique uses Set, which stores only unique values. chunk uses `slice` in a loop stepping by `size`.
-
 **Async Flow Control.**
 
 ```javascript
@@ -304,7 +300,7 @@ async function parallel(tasks, concurrency = Infinity) {
   return results;
 }
 
-async function retry(fn, maxAttempts = 3, baseDelay = 1000) {
+async function retry(fn, maxAttempts = 3, baseDelay = 1000) {  // See Ch 33 for fetchWithRetry with HTTP status checks
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
@@ -316,20 +312,14 @@ async function retry(fn, maxAttempts = 3, baseDelay = 1000) {
 }
 ```
 
-Internally: series runs tasks sequentially with `await` in a loop. parallel uses workers that share an iterator. Each worker pulls the next task, awaits it, and stores the result. This limits concurrency to the number of workers. retry wraps the call in a try-catch loop. On failure, it waits with exponential backoff (base times 2^attempt) before retrying. After max attempts, it throws.
+series runs tasks sequentially with `await` in a loop. parallel uses workers that share an iterator — each pulls the next task, awaits it, and stores the result. retry wraps the call in try-catch with exponential backoff.
 
-**Pipe and Compose.**
+**Pipe, Compose, Curry.**
 
 ```javascript
 const pipe = (...fns) => x => fns.reduce((acc, fn) => fn(acc), x);
 const compose = (...fns) => x => fns.reduceRight((acc, fn) => fn(acc), x);
-```
 
-Pipe passes a value through functions left to right. Compose passes right to left. Both use reduce: pipe uses `reduce`, compose uses `reduceRight`.
-
-**Currying.**
-
-```javascript
 function curry(fn) {
   return function curried(...args) {
     if (args.length >= fn.length) {
@@ -340,19 +330,170 @@ function curry(fn) {
 }
 ```
 
-Currying returns a function that collects arguments until it has enough (based on `fn.length`, the number of declared parameters). Then it calls the original function.
+**Promise.all vs Promise.allSettled.**
 
-## Internal Implementation
+```javascript
+function promiseAllSettled(iterable) {
+  return new Promise((resolve) => {
+    const arr = Array.from(iterable);
+    if (arr.length === 0) return resolve([]);
 
-**How closures work in V8.** When a function is created, V8 captures the outer scope's variables in a context object. The inner function holds a reference to this context. The context persists as long as the inner function exists, even after the outer function returns. In debounce, `timer` lives in this context. Each call to the returned function accesses and modifies the same `timer` variable.
+    const results = new Array(arr.length);
+    let completed = 0;
 
-**How setTimeout interacts with the event loop.** setTimeout schedules a callback in the macrotask queue. The event loop processes all microtasks (Promise callbacks) before processing the next macrotask. When you call `clearTimeout`, the scheduled callback is removed from the queue. In debounce, `clearTimeout` prevents the previous callback from firing. Then `setTimeout` adds a new one.
+    arr.forEach((item, i) => {
+      Promise.resolve(item).then(
+        value => {
+          results[i] = { status: 'fulfilled', value };
+          if (++completed === arr.length) resolve(results);
+        },
+        reason => {
+          results[i] = { status: 'rejected', reason };
+          if (++completed === arr.length) resolve(results);
+        }
+      );
+    });
+  });
+}
+```
 
-**How Promise execution works.** A Promise constructor runs the executor function synchronously. The `.then()` callbacks are scheduled as microtasks. They run after the current synchronous code completes and before any macrotask. In Promise.all, the executor iterates over the input array and calls `.then()` on each item synchronously. Each `.then()` callback runs later as a microtask when the promise resolves. The counter increments inside these microtasks. When the counter reaches the array length, the outer promise resolves.
+Promise.all rejects immediately on the first failure — it's fail-fast. Promise.allSettled never rejects; it waits for all promises and returns an array of `{status, value}` or `{status, reason}` objects. Use all when you need every result or fail. Use allSettled when partial success is acceptable — like loading dashboard widgets where one failing widget shouldn't blank the whole page.
 
-**How Map maintains insertion order.** A Map stores entries in the order they were inserted. `map.keys().next().value` returns the first inserted key. When you `delete` and `set` the same key, it moves to the end. This insertion order is the key to LRU eviction.
+**Full LRU Cache with Doubly-Linked List.**
 
-## Real World Example
+```javascript
+class LRUCache {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.cache = new Map();
+  }
+
+  get(key) {
+    if (!this.cache.has(key)) return -1;
+    const value = this.cache.get(key);
+    this.cache.delete(key);
+    this.cache.set(key, value);
+    return value;
+  }
+
+  put(key, value) {
+    if (this.cache.has(key)) this.cache.delete(key);
+    this.cache.set(key, value);
+    if (this.cache.size > this.capacity) {
+      const oldestKey = this.cache.keys().next().value;
+      this.cache.delete(oldestKey);
+    }
+  }
+}
+```
+
+Map maintains insertion order. On access, delete and re-insert moves the entry to the end. On eviction, `keys().next().value` gives the oldest (least recently used) entry. This gives O(1) get and put without an actual doubly-linked list — Map's iterator is the list. The interviewer might ask "why not use a real linked list?" Answer: a Map-based approach is simpler, has the same O(1) complexity, and is idiomatic JavaScript. A linked list implementation is worth mentioning if they push on it.
+
+**Event Emitter.**
+
+```javascript
+class EventEmitter {
+  constructor() {
+    this.events = new Map();
+  }
+
+  on(event, callback) {
+    if (!this.events.has(event)) this.events.set(event, []);
+    this.events.get(event).push(callback);
+    return () => this.off(event, callback);
+  }
+
+  off(event, callback) {
+    const callbacks = this.events.get(event);
+    if (!callbacks) return;
+    const index = callbacks.indexOf(callback);
+    if (index > -1) callbacks.splice(index, 1);
+  }
+
+  emit(event, ...args) {
+    const callbacks = this.events.get(event);
+    if (!callbacks) return false;
+    callbacks.forEach(cb => cb.apply(null, args));
+    return true;
+  }
+
+  once(event, callback) {
+    const wrapper = (...args) => {
+      this.off(event, wrapper);
+      callback.apply(null, args);
+    };
+    return this.on(event, wrapper);
+  }
+}
+```
+
+The `on` method returns an unsubscribe function — a closure over the callback. This pattern is used by React's useEffect cleanup, Express middleware, and every subscription API. `once` wraps the callback: it calls `off` before invoking the original, so the listener fires exactly once. The `emit` returns a boolean indicating whether listeners existed — useful for debugging.
+
+**Async Iterator / Generator Pattern.**
+
+```javascript
+async function* generateAsyncSequence(fetchFn, pageSize = 10) {
+  let page = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const response = await fetchFn(page, pageSize);
+    for (const item of response.data) {
+      yield item;
+    }
+    hasMore = response.data.length === pageSize;
+    page++;
+  }
+}
+
+async function consumeAsyncSequence() {
+  const sequence = generateAsyncSequence(async (page, size) => {
+    const res = await fetch(`/api/items?page=${page}&size=${size}`);
+    return res.json();
+  });
+
+  for await (const item of sequence) {
+    processItem(item);
+  }
+}
+```
+
+An async generator (`async function*`) yields values asynchronously. Each `yield` pauses execution until the consumer calls `next()`. `for await...of` consumes the iterator, handling the promise unwrapping automatically. This pattern replaces callback-based pagination and stream processing. It's how Node.js readable streams work internally — they implement the async iterator protocol.
+
+**Auto-Curry with Argument Collection.**
+
+```javascript
+function autoCurry(fn) {
+  return function curried(...args) {
+    const allArgs = args;
+    if (allArgs.length >= fn.length) {
+      return fn.apply(this, allArgs);
+    }
+    return function(...nextArgs) {
+      return curried.apply(this, [...allArgs, ...nextArgs]);
+    };
+  };
+}
+
+// Usage:
+const add = autoCurry((a, b, c) => a + b + c);
+add(1)(2)(3);    // 6
+add(1, 2)(3);    // 6
+add(1)(2, 3);    // 6
+add(1, 2, 3);    // 6
+```
+
+Auto-curry collects arguments across multiple calls. It checks `fn.length` (the declared parameter count) to know when enough arguments have been collected. Each partial application returns a new function that concatenates the new args. This is different from manual curry where you define each parameter step — auto-curry works with any function regardless of arity.
+
+## How Closures and the Event Loop Work Here
+
+When a function is created, V8 captures the outer scope's variables in a context object. The inner function holds a reference to this context. The context persists as long as the inner function exists, even after the outer function returns. In debounce, `timer` lives in this context.
+
+setTimeout schedules a callback in the macrotask queue. The event loop processes all microtasks (Promise callbacks) before the next macrotask. When you call `clearTimeout`, the scheduled callback is removed from the queue.
+
+A Promise constructor runs the executor synchronously. The `.then()` callbacks are scheduled as microtasks. They run after the current synchronous code completes and before any macrotask.
+
+## Real World: Autocomplete Search
 
 Build an autocomplete search input that handles fast typing, API calls, and cached results.
 
@@ -376,7 +517,7 @@ const handleInput = debounce(async (query) => {
   }
 }, 300);
 
-// AbortController for stale requests
+// AbortController for stale requests (see Ch 33 for full pattern)
 useEffect(() => {
   const controller = new AbortController();
   if (query.length >= 2) {
@@ -386,56 +527,221 @@ useEffect(() => {
 }, [query]);
 ```
 
-Internally: `debounce` prevents API calls on every keystroke. Only the final query after 300ms idle fires. `memoizeLRU` caches results for repeated queries. If the user types "rea", deletes to "r", and types "rea" again, the cached result returns instantly. `AbortController` cancels in-flight requests when the query changes. This prevents a race where a slow response overwrites newer results.
-
-Without debounce: API call per keystroke at 60wpm is about 5 calls per second. Each response might arrive out of order. The UI flashes between results. Debounce reduces calls to 1 per pause. Memoize eliminates repeated calls entirely.
+Without debounce: API call per keystroke at 60wpm is about 5 calls per second. Each response might arrive out of order. Debounce reduces calls to 1 per pause. Memoize eliminates repeated calls entirely.
 
 ## Tradeoffs
 
-**Debounce vs Throttle.** Debounce waits for a pause. It fires once after the user stops. Throttle fires at most once per interval. Use debounce for search and resize where you want the final state. Use throttle for scroll and progress where you want regular updates.
+**Debounce vs Throttle.** Debounce waits for a pause. Throttle fires at most once per interval. Use debounce for search and resize. Use throttle for scroll and progress.
 
-**Recursion vs iteration for flatten.** Recursion is simpler to read. But deep nesting can overflow the call stack (typically around 10000 frames). Iteration with a stack avoids this but is more complex.
+**Recursion vs iteration for flatten.** Recursion is simpler but can overflow the call stack (around 10000 frames). Iteration with a stack avoids this.
 
-**Shallow copy vs deep clone.** Shallow copy (spread, Object.assign) is O(n) where n is top-level properties. Deep clone is O(n) where n is every node in the object graph. Use shallow when you only need the top level. Use deep when you need nested independence.
+**Shallow copy vs deep clone.** Shallow is O(n) for top-level properties. Deep is O(n) for every node. Use shallow when you only need the top level.
 
-**Memory vs CPU for memoize.** Memoize stores results in memory. Cache hits return O(1). Cache misses compute and store. The tradeoff: memory grows with unique inputs. LRU eviction bounds memory but adds overhead from delete-re-insert on every hit.
+**Memory vs CPU for memoize.** Cache hits return O(1). LRU eviction bounds memory but adds overhead from delete-re-insert on every hit.
 
-**JSON.stringify as key.** Simple and works for primitives and plain objects. But fails for undefined values, functions, Symbols, and circular references. A custom key function (e.g., using `Map` of argument tuples) is more robust but more complex.
+**Promise.all vs Promise.allSettled.** all fails fast. allSettled waits for all. Use all when you need every result. Use allSettled when partial success is acceptable.
 
-**Promise.all vs Promise.allSettled.** all fails fast. Good when any failure means the whole operation is invalid. allSettled waits for all. Good when you want partial results.
+**Event Emitter vs native EventTarget.** EventEmitter is simpler and works in Node.js. EventTarget requires DOM or Node's EventTarget class, uses CustomEvent objects, and has a different API. Use EventEmitter for internal pub/sub. Use EventTarget for browser/DOM interop.
+
+**Async iterator vs array of promises.** Async iterator is lazy — yields one at a time. Array of promises executes all immediately. Use async iterator for infinite sequences, streams, or memory-constrained scenarios. Use array of promises when you need all results upfront.
+
+**Auto-curry vs manual curry.** Auto-curry is convenient but relies on `fn.length` which has edge cases with rest params and defaults. Manual curry is explicit and works with any function. Use auto-curry for simple utilities. Use manual curry when arity is ambiguous.
 
 ## Common Mistakes
 
-- Forget `this` binding in debounce and throttle. Use `fn.apply(context, args)` or arrow function.
-- Forget to handle empty input in Promise.all. Empty array should resolve immediately with empty array.
+- Forget `this` binding in debounce and throttle. Use `fn.apply(context, args)`.
+- Forget to handle empty input in Promise.all. Empty array should resolve immediately.
 - Forget circular references in deep clone. Leads to stack overflow. Use WeakMap cache.
 - Use `typeof value === 'object'` without null check. `typeof null === 'object'`.
-- Use `Object.keys()` only, missing Symbol keys in deep clone.
-- Use recursion without depth parameter in flatten. Infinite recursion on circular arrays.
-- Use `setInterval` for polling instead of recursive setTimeout with retry logic.
-- Forget to return the result from memoized function on cache hit.
-- Use `new Date()` for deep clone timestamps instead of `new Date(value.getTime())`.
 - Forget to handle non-promise values in Promise polyfills. Use `Promise.resolve(item)`.
+- Forget to return the result from memoized function on cache hit.
+- In Event Emitter, forget to clone the callbacks array before iterating. Mutating during emit causes skipped or duplicate calls.
+- In async generators, forget that yield pauses until the consumer calls next(). Don't yield in a tight loop expecting immediate consumption.
+- In auto-curry, assume `fn.length` includes default parameters. It doesn't — default params are only counted if they have no value before them.
 
 ## SDE-2 Interview Answer
 
-**Mid-level variant.** "I start by asking which primitives the problem needs. Debounce needs closure for the timer variable and setTimeout for the delay. I write the outer function that creates the timer, then the inner function that clears and restarts it. I use `fn.apply(this, args)` for correct binding. I talk through edge cases: what if delay is 0, what about leading edge."
+**Mid-level variant.** "I start by asking which primitives the problem needs. Debounce needs closure for the timer variable and setTimeout for the delay. I write the outer function that creates the timer, then the inner function that clears and restarts it. I use `fn.apply(this, args)` for correct binding."
 
-**Senior variant.** "Every coding problem maps to JavaScript primitives. I think through the primitives first, then write the code. For deep clone, I need recursion for traversal and WeakMap for cycle detection. For Promise.all, I need a new Promise, a counter, and array iteration. I code the happy path first, then add edge cases like empty input, non-promise items, and circular references. I talk through the tradeoffs as I code."
+**Senior variant.** "Every coding problem maps to JavaScript primitives. I think through the primitives first, then write the code. For deep clone, I need recursion for traversal and WeakMap for cycle detection. For Promise.all, I need a new Promise, a counter, and array iteration. I code the happy path first, then add edge cases."
 
-**Engineering Lead variant.** "I teach the team to code from primitives. The six primitives cover 90% of coding problems. In code review, I look for edge case handling: empty inputs, special types, circular references, async error paths. I expect every utility to handle these gracefully. We write tests that cover edge cases before the happy path."
+**Engineering Lead variant.** "I teach the team to code from primitives. The six primitives cover 90% of coding problems. In code review, I look for edge case handling: empty inputs, special types, circular references, async error paths."
 
 ## Follow-up Questions
 
-1. Debounce fires on the trailing edge (after pause). Implement a leading edge variant that fires immediately on the first call, then debounces subsequent calls. (Answer: add a `leading` flag. On first call, if `leading` is true and no timer is pending, fire immediately and start a timer. Subsequent calls reset the timer. On timer expiry, reset the flag so the next call fires immediately.)
+**Q1: Implement a leading edge debounce variant.**
+A leading edge debounce fires on the *first* call in a burst, not the last. Add a `leading` flag parameter. On the first call, if no timer is pending, fire `fn` immediately and start a cooldown timer. Subsequent calls within the delay window are ignored — they reset the timer but don't fire. When the timer expires, the trailing call can optionally fire too.
 
-2. How would you implement `Promise.all` with cancellation? If one promise rejects, cancel the others. (Answer: wrap each input promise so it stores a rejection handler. When one rejects, call a cancel function that ignores remaining resolutions. Use Promise.race with a cancel token or track pending promises and abort them.)
+```javascript
+function debounce(fn, delay, { leading = false, trailing = true } = {}) {
+  let timer = null;
+  let lastArgs = null;
 
-3. Your memoize function caches by `JSON.stringify(args)`. Two different objects with the same enumerable string properties will collide. How do you fix this without losing performance? (Answer: use a `Map` of `Map` chains, one per argument. First argument is the key in the first Map, second argument is the key in the nested Map, and so on. This avoids serialization entirely but adds per-argument lookup cost. Or use a custom stable serialization that includes constructor names.)
+  return function (...args) {
+    const context = this;
+    const callNow = leading && !timer;
 
-4. Implement `asyncPool` that takes N tasks and a concurrency limit K. Tasks start immediately but no more than K run at once. Show the version that preserves input order in results. (Answer: use a worker pattern. Create K workers. Each worker pulls the next task from a shared iterator using `Symbol.iterator.next()`. Store results by index. The worker loop: `for (let i = 0; ; i++) { const { value, done } = iterator.next(); if (done) break; results[i] = await value(); }`. This preserves order because each task writes to its original index.)
+    clearTimeout(timer);
+    lastArgs = args;
 
-5. Deep clone handles circular references with WeakMap. But WeakMap keys are garbage collected. What happens when the original object is garbage collected but the clone is still referenced? (Answer: the WeakMap entry is automatically removed because the key (original object) is no longer reachable. This is safe. The clone is independent. A regular Map would leak memory by holding a reference to the collected original.)
+    timer = setTimeout(() => {
+      timer = null;
+      if (trailing && lastArgs) {
+        fn.apply(context, lastArgs);
+        lastArgs = null;
+      }
+    }, delay);
+
+    if (callNow) {
+      fn.apply(context, args);
+      lastArgs = null;
+    }
+  };
+}
+```
+
+The key insight: the `callNow` check fires only when `timer` is null (first call or after cooldown). The `clearTimeout` + `setTimeout` pattern ensures only the last trailing call survives. Use `{ leading: true, trailing: false }` for "fire once and ignore" behavior.
+
+**Q2: How would you implement `Promise.all` with cancellation?**
+The core challenge: `Promise.all` doesn't support `AbortController` natively. Wrap each promise so it accepts a shared signal. When one promise rejects, abort all others. Use a shared `AbortController` and pass its `signal` to each sub-promise. On first rejection, call `controller.abort()` — the remaining promises check `signal.aborted` and short-circuit.
+
+```javascript
+function promiseAllWithCancel(promises) {
+  const controller = new AbortController();
+  const wrapped = promises.map(p =>
+    Promise.resolve(p).then(
+      val => {
+        if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        return val;
+      }
+    )
+  );
+
+  const all = Promise.all(wrapped);
+  all.catch(() => controller.abort());
+  return Object.assign(all, { abort: () => controller.abort() });
+}
+```
+
+The returned promise exposes an `abort()` method. When called, it aborts the controller, and any promise that checks `signal.aborted` rejects. This doesn't cancel in-flight network requests — you'd need to thread the `signal` into each `fetch` call for that.
+
+**Q3: Your memoize function caches by `JSON.stringify(args)`. Two different objects with the same properties collide. How do you fix this?**
+`JSON.stringify({a:1}) === JSON.stringify({a:1})` — different object references produce the same key. Fix: use a **chain of Maps**, one per argument position. Each argument's Map stores the next level of Maps. On lookup, traverse the chain: `cache.get(arg0).get(arg1).get(arg2)`. Since Maps use reference equality (`===`), distinct objects get distinct entries without serialization.
+
+```javascript
+function memoize(fn) {
+  const cache = new Map();
+  return function (...args) {
+    let current = cache;
+    for (const arg of args) {
+      if (!current.has(arg)) current.set(arg, new Map());
+      current = current.get(arg);
+    }
+    if (current.has('result')) return current.get('result');
+    const result = fn.apply(this, args);
+    current.set('result', result);
+    return result;
+  };
+}
+```
+
+This gives exact reference-based caching. The tradeoff: it only works when the same object reference is passed again (not a clone with the same values). For value-based deep equality, you'd need a hash function or trie with structural comparison, which adds complexity.
+
+**Q4: Implement `asyncPool` with concurrency limit K that preserves input order.**
+Create K "worker" functions that pull tasks from a shared iterator. Each worker loops: pull the next task, await it, store the result by index, repeat until no tasks remain. Use `Promise.all` to wait for all workers to finish.
+
+```javascript
+async function asyncPool(concurrency, tasks, taskFn) {
+  const results = new Array(tasks.length);
+  const iterator = tasks[Symbol.iterator]();
+
+  async function worker() {
+    for (let i = 0; ; i++) {
+      const { value: task, done } = iterator.next();
+      if (done) break;
+      const idx = tasks.indexOf(task); // or track index manually
+      results[idx] = await taskFn(task);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, tasks.length) },
+    () => worker()
+  );
+  await Promise.all(workers);
+  return results;
+}
+```
+
+The shared iterator ensures each task is picked up exactly once, and `results[idx]` preserves input order. The concurrency limit is the number of workers — at most K tasks run simultaneously. The iterator's `next()` call is synchronous and safe because JavaScript is single-threaded.
+
+**Q5: Deep clone handles circular references with WeakMap. What happens when the original object is garbage collected but the clone is still referenced?**
+The `WeakMap` entry is **automatically removed** when its key (the original object) is garbage collected. WeakMaps hold weak references to their keys — they don't prevent garbage collection. After the original is collected, the WeakMap entry becomes unreachable and is cleaned up by the GC. The clone is fully independent: it holds no reference to the original, and no reference to the WeakMap entry. The clone's structure is a plain object graph that the GC treats normally.
+
+```javascript
+const original = { self: null };
+original.self = original; // circular
+
+const cloned = deepClone(original);
+// original = null → original is GC'd → WeakMap entry is cleaned up
+// cloned remains valid: cloned.self === cloned
+```
+
+This is why `WeakMap` is the right choice over `Map` for cycle detection — a `Map` would keep the original alive indefinitely, causing a memory leak.
+
+**Q6: Your Event Emitter's `on` returns an unsubscribe function. What's the advantage over requiring `off(event, callback)`?**
+The callback reference doesn't need to be stored by the caller. With `off(event, callback)`, you must keep a reference to the exact function to pass it back for removal — if you create an inline function, you can't remove it. With the unsubscribe pattern, the closure captures the callback internally, and you only need to store the returned function.
+
+```jsx
+// With off: need to store callback reference
+const handler = () => doSomething();
+emitter.on('event', handler);
+// later:
+emitter.off('event', handler); // must use same reference
+
+// With unsubscribe: just store the returned function
+const unsub = emitter.on('event', () => doSomething());
+// later:
+unsub(); // no reference needed
+```
+
+This pattern is identical to React's `useEffect` cleanup, `addEventListener` removal, and every subscription API in the ecosystem. It's idiomatic because it reduces coupling — the subscriber doesn't need to know the emitter's internal callback list structure.
+
+**Q7: How does an async generator differ from returning an array of promises?**
+An **array of promises** executes all requests immediately and stores all results in memory at once. An **async generator** yields one result at a time, pausing until the consumer requests the next value via `for await...of`. This is **lazy evaluation** — you don't pay the memory cost for results you haven't consumed yet. For infinite sequences (live data streams, paginated APIs), an async generator is the only viable option because you can't materialize an infinite array.
+
+```javascript
+// Array of promises: all execute immediately, all in memory
+const promises = urls.map(url => fetch(url).then(r => r.json()));
+const results = await Promise.all(promises); // all in memory
+
+// Async generator: one at a time, lazy
+async function* fetchPages(urls) {
+  for (const url of urls) {
+    yield await fetch(url).then(r => r.json());
+  }
+}
+// Only fetches next page when for-await requests it
+```
+
+The tradeoff: async generators can't run in parallel without extra orchestration. Array of promises with `Promise.all` naturally parallelizes. Use generators for sequential lazy loading; use `Promise.all` for batch parallel execution.
+
+**Q8: Auto-curry checks `fn.length`. What if the function uses rest parameters?**
+`fn.length` excludes parameters after rest params and default params. A function like `(...args) => args.length` has `length === 0`, so auto-curry would fire on the first call even though it expects multiple arguments. You can't reliably determine arity from rest params.
+
+Three solutions: (1) **Require explicit arity** — pass the expected argument count as a second parameter: `autoCurry(fn, 3)`. (2) **Count from the source** — parse `fn.toString()` to count parameters, but this breaks with minification. (3) **Use partial application** — instead of auto-curry, use a manually curried function where each parameter is a separate function call:
+
+```javascript
+// Manual curry: explicit, works with any function
+const add = curry((a, b, c) => a + b + c);
+add(1)(2)(3); // 6
+
+// Auto-curry: convenient but fn.length unreliable with rest params
+const add = autoCurry((a, b, c) => a + b + c);
+add(1)(2)(3); // works because fn.length === 3
+```
+
+Libraries like lodash take the explicit arity approach: `_.curry(fn, arity)`. The lesson: auto-curry works well for functions with known, fixed arity. For variadic functions, explicit is safer.
 
 ## Mental Trigger
 
@@ -450,9 +756,13 @@ What primitives does this problem need?
 - Promise.all: new Promise + counter + results array. Fail fast by passing reject as second .then arg.
 - Promise.race: first settled. Use for timeout wrapping.
 - Promise.allSettled: never rejects. Collects {status, value/reason} for all.
+- LRU Cache: Map-based O(1) get/put. Delete + re-insert moves to end. `keys().next().value` for eviction.
+- Event Emitter: Map of callback arrays. on returns unsubscribe fn. once wraps + removes. emit returns boolean.
+- Async Iterator: `async function*` yields values. `for await...of` consumes. Pauses until consumer requests next.
+- Auto-Curry: collect args across calls. Check `fn.length` for arity. Returns new function concatenating args.
 - Flatten: recursion with depth check or iterative stack.
 - GroupBy: reduce with object accumulator.
-- Unique: new Set(arr) or filter with Set for objects by key.
+- Unique: new Set(arr).
 - Chunk: loop with slice stepping by size.
 - Memoize: closure + Map. LRU uses Map insertion order.
 - Series: await in for loop.

@@ -10,7 +10,7 @@ description: "Error boundaries, Suspense, error recovery patterns"
 
 ---
 
-## Problem
+## The White Screen of Death
 
 A single null value crashes your entire app. One component throws during render and the whole screen goes white. Users see a blank page instead of a graceful error message. You cannot wrap a try/catch around a React component render. React calls your function internally.
 
@@ -22,7 +22,9 @@ function Profile({ user }) {
 
 Before Error Boundaries (React 15), one such throw corrupted React's internal tree and could blank the entire app. There was no way to contain the damage.
 
-## Why Existing Solution Failed
+Here is the mental shift that makes error handling in React click: **an error is not an exception to hide. It is a state your UI must render.** You do not "handle" errors in the traditional sense. You catch them at a boundary and render a fallback. The error is just another possible state, like loading or empty.
+
+## Why try/catch Does Not Work Here
 
 Before Error Boundaries, you had no way to catch render-time errors. You could add try/catch in event handlers. You could validate props. But a render error was fatal. React's internal reconciler would get into an inconsistent state. The entire React tree would unmount. You got a white screen.
 
@@ -41,7 +43,9 @@ React calls your components during the render phase. That call is inside React's
 
 Error Boundaries are that primitive. They are class components with `componentDidCatch` and `getDerivedStateFromError`. They catch errors from their subtree's render and swap in a fallback UI. They contain the blast radius.
 
-## Mental Model
+Think of it like a ship with watertight compartments. One compartment floods, but the doors close. The rest of the ship stays afloat. Error Boundaries are those watertight doors.
+
+## The Mental Model: Error Is a State, Caught at a Boundary
 
 An error is just another STATE your UI must render. It is not an exception to handle somewhere else. The design question is always: at which BOUNDARY do I catch it, and what do I render instead? Three boundaries cover everything.
 
@@ -50,6 +54,8 @@ An error is just another STATE your UI must render. It is not an exception to ha
 - **Suspense** catches "not ready yet."
 
 Pick the boundary. Design the fallback. Keep the blast radius small.
+
+The core insight: **React calls your component inside its own work loop. You cannot intercept that call with your own try/catch. So React gives you Error Boundaries — the only way to catch render-phase errors.**
 
 From "error is a state, caught at a boundary" you can see why React needs Error Boundaries (you cannot try/catch a render), why they do NOT catch event/async errors, and how Suspense plus error boundaries plus normal render put together pending/failed/ready.
 
@@ -188,15 +194,123 @@ The organizational pattern: standardize the pattern, automate the visibility (Se
 
 ## Follow-up Questions
 
-1. Why can't you try/catch a render error, and what catches it instead? (foundational)
+1. Why can't you try/catch a render error, and what catches it instead?
 
-2. List what Error Boundaries do and do not catch, and why (tie to JavaScript execution contexts). (application)
+**Q1: Why can't you try/catch a render error, and what catches it instead?**
 
-3. Compose Suspense plus an error boundary for a data-fetching component. Show the pending, failed, and ready states. (application)
+React calls your component functions during its **render phase** — inside React's own internal work loop (`performUnitOfWork`). When your component throws, the throw propagates through React's fiber reconciliation machinery, not through your component's call stack. Your `try/catch` in a parent component wraps a call to `return <Child />`, but the actual execution of `Child` happens later when React processes the fiber — outside your `try/catch` scope. This is why:
 
-4. Walk through your production incident response. What is the first action and why? (analysis)
+```jsx
+function Parent() {
+  try {
+    return <Child />;  // this doesn't execute Child yet — it just creates an element
+  } catch (e) {
+    return <Fallback />; // never catches Child's render error
+  }
+}
+```
 
-5. Where do you place boundaries to limit blast radius in a complex app with independent widgets? Design the boundary hierarchy. (synthesis)
+`<Child />` is JSX — it's syntactic sugar for `React.createElement(Child, null)`. The element is created immediately, but `Child`'s function is called later by React's reconciler. If `Child` throws during that call, your `try/catch` is no longer on the call stack. **Error Boundaries** are the solution. They are class components with `componentDidCatch` and `getDerivedStateFromError`. When a child throws during render, React's internal work loop catches it, walks up the fiber tree to find the nearest Error Boundary, and calls `getDerivedStateFromError` to trigger a re-render with fallback state. The boundary is part of React's own error handling — it intercepts throws that happen inside React's render pass.
+
+2. List what Error Boundaries do and do not catch, and why (tie to JavaScript execution contexts).
+
+**Q2: List what Error Boundaries do and do not catch, and why (tie to JavaScript execution contexts).**
+
+**Error Boundaries DO catch:**
+- Errors thrown during a component's **render function** (the render phase)
+- Errors in lifecycle methods (`componentDidMount`, `componentDidUpdate`, `getDerivedStateFromError`)
+- Errors in constructors of class components
+- Errors thrown by `use` (when it encounters a rejected promise in React 19+)
+
+**Error Boundaries do NOT catch:**
+- **Event handler errors** — `onClick`, `onChange`, `onSubmit` callbacks run in the browser's event dispatch, not in React's render pass. React doesn't control when event handlers execute. Use `try/catch` in the handler.
+- **Async errors** — `setTimeout`, `setInterval`, `Promise.then`, `async/await` run in later tasks or microtasks on the event loop. By the time they execute, React's render phase is long finished. Use `try/catch` or the promise's `.catch()`.
+- **Server-side rendering errors** — SSR uses `renderToString` which has its own error handling (or throws).
+- **Errors in the boundary itself** — if the Error Boundary's own render throws, it propagates up to the *next* boundary.
+
+The distinction maps directly to **JavaScript execution contexts**: React's render phase is synchronous and runs inside React's work loop. Error Boundaries intercept errors in that specific execution context. Event handlers run in the browser's event dispatch task. Async callbacks run in separate macrotasks/microtasks. These are different points in the event loop — React cannot intercept them.
+
+3. Compose Suspense plus an error boundary for a data-fetching component. Show the pending, failed, and ready states.
+
+**Q3: Compose Suspense plus an error boundary for a data-fetching component. Show the pending, failed, and ready states.**
+
+```tsx
+import { Suspense } from "react";
+import { useQuery } from "@tanstack/react-query";
+
+function UserProfile({ userId }) {
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["user", userId],
+    queryFn: () => fetchUser(userId),
+    suspense: true, // enables Suspense integration
+  });
+
+  return <div>{data.name}</div>;
+}
+
+// Parent component composes the three states:
+function UserPage({ userId }) {
+  return (
+    <ErrorBoundary fallback={<ErrorMessage />}>
+      <Suspense fallback={<LoadingSpinner />}>
+        <UserProfile userId={userId} />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+```
+
+**Pending state:** When the query is in-flight, `useQuery` with `suspense: true` throws a promise. React's internal work loop catches the thenable and finds the nearest `<Suspense>` boundary. The boundary shows `<LoadingSpinner />`. No code in `UserProfile` executes yet — React pauses rendering until the promise resolves.
+
+**Failed state:** When the query rejects, the error propagates up through the component tree. The nearest `<ErrorBoundary>` catches it via `getDerivedStateFromError` and renders `<ErrorMessage />`. The Suspense boundary is bypassed — errors bubble past Suspense to the Error Boundary.
+
+**Ready state:** When the query resolves, React re-renders `UserProfile`. It calls the component, reads `data`, and returns the JSX. The Suspense fallback disappears and the actual content appears.
+
+The composition order matters: **ErrorBoundary wraps Suspense wraps the component**. Suspense handles pending. ErrorBoundary handles errors. If you reverse them (Suspense outside ErrorBoundary), the error from a failed query would be caught by Suspense's error handling (which doesn't exist — Suspense doesn't catch errors). The Error Boundary must be the outermost wrapper.
+
+4. Walk through your production incident response. What is the first action and why?
+
+**Q4: Walk through your production incident response. What is the first action and why?**
+
+**Step 1: Mitigate immediately.** The first action is to stop user impact — not to debug. Roll back the release to the previous known-good version, or disable the broken feature via a feature flag. Users are currently hitting a white screen or broken behavior. Every minute of debugging is a minute of ongoing user impact. Mitigation is fast (rollback takes seconds) and immediately stops the bleeding. Debugging a live fire wastes time and keeps users affected.
+
+**Step 2: Triage in Sentry.** Once users are safe, examine the error in your error tracker. Look at the stack trace (with source maps), the release version that introduced it, the number of affected users, and the specific component/file. Identify the root cause from the stack trace.
+
+**Step 3: Reproduce locally.** Set up the same environment and inputs. Confirm the root cause. Write a failing test that captures the bug.
+
+**Step 4: Fix and guard.** Apply the fix. Add an Error Boundary around the risky component to contain future failures. Ensure the failing test passes. Deploy to staging, verify, then production.
+
+**Step 5: Communicate and postmortem.** Notify stakeholders of the incident timeline. Conduct a postmortem: why did CI and code review miss this? Was there a missing test? A gap in type coverage? Add the missing check to prevent recurrence.
+
+The key insight: **mitigate first, debug second.** This is counterintuitive — engineers want to understand the problem before acting. But in production, user impact compounds with time. A 5-minute rollback plus 30-minute debug is better than a 35-minute debug while users suffer.
+
+5. Where do you place boundaries to limit blast radius in a complex app with independent widgets? Design the boundary hierarchy.
+
+**Q5: Where do you place boundaries to limit blast radius in a complex app with independent widgets?**
+
+The principle: **boundaries go around independent subtrees that should fail independently.** Each boundary should catch failures in its subtree and render a fallback that keeps the rest of the app functional.
+
+**Recommended hierarchy for a dashboard with widgets:**
+
+```
+App
+├── ErrorBoundary (route-level)     → catches router-level failures, shows "Page unavailable"
+│   ├── AppShell (nav, sidebar)     → NOT wrapped — if nav breaks, whole app is broken
+│   └── ErrorBoundary (widget)      → catches widget failures, shows widget-level error
+│       ├── <AnalyticsWidget />     → independent, can fail without affecting others
+│   └── ErrorBoundary (widget)
+│       ├── <RecentActivity />      → independent
+│   └── ErrorBoundary (widget)
+│       ├── <ChartWidget />         → independent
+```
+
+**Rules for placement:**
+1. **Route-level boundary**: One per route. If an entire route's data is corrupt, show a full-page error with retry. This is the outermost safety net.
+2. **Widget-level boundaries**: Each independent widget gets its own boundary. A crashing analytics widget should not take down the activity feed. The fallback for each widget is a small error card with a retry button.
+3. **Do NOT wrap shared infrastructure** (nav, layout, shell). If the nav breaks, the whole app is unusable anyway. Wrapping it in a boundary gives a false sense of recovery — you'd show a page with no navigation.
+4. **Do NOT use a single top-level boundary only.** One boundary means any error blanks the entire page. Too many boundaries create complex fallback states and make debugging harder.
+
+Each fallback should be designed with **recovery in mind**: a retry button, a link to report the error, and enough context to help the user understand what failed. A generic "Something went wrong" is less useful than "Chart failed to load. [Retry]"
 
 ## Mental Trigger
 

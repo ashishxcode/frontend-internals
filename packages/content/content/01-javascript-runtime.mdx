@@ -5,15 +5,21 @@ part: "JavaScript Runtime"
 description: "Execution context, call stack, heap, closures, memory model"
 ---
 
-## Problem
+## The Problem You've Already Hit
 
-You ship a CRM dashboard. Your team has a table component that fetches 500 rows, each row has an "expand" button. User clicks row 42. Nothing happens. DevTools shows `Maximum call stack size exceeded`. Where did this come from?
+Picture this: you ship a CRM dashboard. Your team built a table that fetches 500 rows. Each row has an "expand" button. User clicks row 42. Nothing happens. You open DevTools and see `Maximum call stack size exceeded`.
 
-You had a recursive filter that walked a deeply nested customer hierarchy. A customer had 8000 sub-accounts. Recursion went 8000 levels deep. The engine ran out of stack.
+Your heart sinks. Where did this come from?
 
-Now zoom out to the engine level. Two problems the runtime must solve for every script you ship:
+Turns out, someone wrote a recursive filter that walks a deeply nested customer hierarchy. One customer had 8,000 sub-accounts. The recursion went 8,000 levels deep. The engine ran out of stack.
 
-**Problem 1: Nested function calls need a pause-and-resume system.**
+This isn't just a bug — it's a window into how JavaScript's engine actually works under the hood. Let's peel back the curtain.
+
+At the engine level, every script you ship runs into two fundamental problems:
+
+**Problem 1: You need a pause-and-resume system for nested calls.**
+
+Think about this code:
 
 ```js
 function renderHeader() { return renderLogo() + renderSearch(); }
@@ -22,10 +28,11 @@ function renderSearch() { return "<input>"; }
 renderHeader();
 ```
 
-When `renderHeader` calls `renderLogo`, the engine must pause `renderHeader`. It must remember: "after `renderLogo` finishes, go back to `renderLogo() + renderSearch()` and evaluate the `+`." Then it runs `renderLogo`. Then it needs to remember where it was in `renderHeader` after `renderLogo` returned. So it needs to store:
+When `renderHeader` calls `renderLogo`, the engine has to pause `renderHeader` mid-execution. It needs to remember: "after `renderLogo` finishes, come back to `renderLogo() + renderSearch()` and finish the `+` operation." Then it runs `renderLogo`. Then it needs to remember where it was in `renderHeader` after `renderLogo` returned.
 
-- Where to resume each paused function (the return address).
-- Each call's own local variables (`renderHeader`'s template literal must not overwrite `renderLogo`'s).
+So it needs to store:
+- Where to resume each paused function (the return address)
+- Each call's own local variables (`renderHeader`'s template literal must not overwrite `renderLogo`'s)
 
 It needs a last-in, first-out structure. The most recently called function finishes first. That structure is the call stack.
 
@@ -39,17 +46,17 @@ function createWidget(config) {
 const mainWidget = createWidget({ id: "chart-1" });
 ```
 
-`createWidget`'s call frame is destroyed the instant it returns. But `mainWidget` must survive. The object cannot live in the stack frame. It would be wiped. It must live somewhere whose lifetime is independent of any single call. That somewhere is the heap.
+Here's the thing: `createWidget`'s call frame is destroyed the instant it returns. But `mainWidget` has to survive. The object can't live in the stack frame — it would be wiped out. It has to live somewhere whose lifetime is independent of any single call. That somewhere is the heap.
 
-This is the entire reason for the two-region memory split. It is not an arbitrary implementation detail. It falls directly out of "some data outlives the call that made it, some does not."
+This is the entire reason for the two-region memory split. It's not some arbitrary implementation detail. It falls directly out of a simple fact: some data outlives the call that made it, some doesn't.
 
 ---
 
-## Why Existing Solution Failed
+## Why Existing Solutions Failed
 
-Early languages (BASIC, early Fortran) used a flat, single set of variable slots. Every function wrote to the same global pool of named variables. This worked for simple scripts. It broke immediately on two requirements:
+Early languages like BASIC and early Fortran used a flat, single set of variable slots. Every function wrote to the same global pool of named variables. This worked for simple scripts. It broke immediately on two requirements:
 
-**Recursion.** If function `A` calls itself, the second invocation's locals overwrite the first invocation's. Try computing factorial without recursion support. You need each invocation to have its own private copy of `n` and `result`.
+**Recursion.** If function `A` calls itself, the second invocation's locals overwrite the first invocation's. Try computing factorial without recursion support — you need each invocation to have its own private copy of `n` and `result`.
 
 **Re-entrancy.** If `A` calls `B` which calls `A`, three invocations exist simultaneously. A flat variable model cannot distinguish `A`'s first `count` from `A`'s second `count`. They collide.
 
@@ -61,9 +68,14 @@ The heap solved the second problem. Objects with lifetimes independent of the cr
 
 ## Mental Model
 
-Picture the JavaScript engine as a workshop with two tables. The **stack** is a narrow desk where you work on one task at a time, stacking papers for tasks you paused. Each paper (frame) lists local variables and where to go when done. The **heap** is a warehouse where you store objects that many tasks might need. You do not put warehouse items on the desk they would clutter it. You put a note card (address) on the desk pointing to the warehouse shelf.
+Here's the single core insight I want you to carry with you:
 
-**One sentence: The stack tracks who called whom. The heap holds what outlives the call. Closures are what happens when the heap keeps a stack frame alive.**
+**The stack tracks who called whom. The heap holds what outlives the call. Closures are what happens when the heap keeps a stack frame alive.**
+
+Picture the JavaScript engine as a workshop with two tables:
+
+- The **stack** is a narrow desk where you work on one task at a time, stacking papers for tasks you paused. Each paper (frame) lists local variables and where to go when done.
+- The **heap** is a warehouse where you store objects that many tasks might need. You don't put warehouse items on the desk — they'd clutter it. You put a note card (address) on the desk pointing to the warehouse shelf.
 
 ```
             JavaScript Engine memory
@@ -91,7 +103,7 @@ When a frame pops, its slots vanish. Heap objects only vanish later, when the ga
 
 ## Visualization
 
-Trace `renderHeader() → renderLogo() → return` step by step. Watch the stack grow then unwind.
+Let's trace `renderHeader() → renderLogo() → return` step by step. Watch the stack grow then unwind.
 
 ```
 1) Global context, renderHeader() called
@@ -123,7 +135,7 @@ Trace `renderHeader() → renderLogo() → return` step by step. Watch the stack
 
 The "stack" in stack overflow and in a stack trace is literally this structure. A runaway recursion never pops. Frames pile up until the engine aborts: `Maximum call stack size exceeded`.
 
-Here is how V8 compiles your source code into something that runs on these structures:
+Here's how V8 compiles your source code into something that runs on these structures:
 
 ```mermaid
 flowchart LR
@@ -135,13 +147,13 @@ flowchart LR
   tf -. deopt (assumption broke) .-> ig
 ```
 
-Your source goes through scanner (tokenizer), parser (AST builder), then Ignition (bytecode interpreter). Hot functions get promoted through Sparkplug (fast baseline JIT) to Maglev (mid-tier JIT) to TurboFan (peak optimizer). If TurboFan makes a wrong assumption, it deoptimizes back to Ignition.
+Your source goes through scanner (tokenizer), parser (AST builder), then Ignition (bytecode interpreter). Hot functions get promoted through Sparkplug (fast baseline JIT) to Maglev (mid-tier JIT) to TurboFan (peak optimizer). If TurboFan makes a wrong assumption, it deoptimizes back to Ignition. For detailed explanations of each tier, see the Internal Implementation section below.
 
 ---
 
 ## Engine Simulation
 
-Walk the engine through code that touches all five models: primitive vs reference, scope chain, and a closure that outlives its frame.
+Let's walk the engine through code that touches all five models: primitive vs reference, scope chain, and a closure that outlives its frame.
 
 ```js
 const tax = 0.2;                    // (A) global primitive
@@ -189,7 +201,7 @@ When the engine creates the `deposit` function object (#h2), it stamps onto it a
 
 `makeAccount` returns the address of `deposit` (#h2). `d` (in global) now holds #h2. The `makeAccount` frame is popped off the stack.
 
-Here is the crucial moment. Normally when a frame pops, its locals (`balance`, `owner`) are gone. But `deposit` (#h2) still holds a reference to makeAccount's environment. The garbage collector cannot reclaim that environment. Something live still points at it. The environment is detached from the stack but kept alive on the heap.
+Here's the crucial moment. Normally when a frame pops, its locals (`balance`, `owner`) are gone. But `deposit` (#h2) still holds a reference to makeAccount's environment. The garbage collector cannot reclaim that environment. Something live still points at it. The environment is detached from the stack but kept alive on the heap.
 
 ```
 STACK                          HEAP
@@ -209,7 +221,7 @@ That surviving box (#h3) is the closure. A closure is not a special language fea
 
 ### Step H: d(50)
 
-A new frame for `deposit` is pushed. It needs `balance`. `balance` is not in deposit's own environment. The engine walks the scope chain: deposit's env -> (via `[[Scope]]`) -> the closed-over env (#h3), where it finds `balance = 100`. Updates it to `150`. Returns. Frame pops. But #h3 persists, so the new `balance` of 150 is remembered.
+A new frame for `deposit` is pushed. It needs `balance`. `balance` is not in deposit's own environment. The engine walks the scope chain: deposit's env → (via `[[Scope]]`) → the closed-over env (#h3), where it finds `balance = 100`. Updates it to `150`. Returns. Frame pops. But #h3 persists, so the new `balance` of 150 is remembered.
 
 ```
 deposit(50) frame                lookup walk for `balance`:
@@ -252,7 +264,7 @@ STACK                             STACK            HEAP
 
 ## Internal Implementation
 
-The mental model above is what you reason with. Here is what is actually true underneath in the ECMAScript spec and V8.
+The mental model above is what you reason with. Here's what is actually true underneath in the ECMAScript spec and V8.
 
 ### Execution context spec (ECMA-262 section 9)
 
@@ -326,9 +338,9 @@ V8 runs code through four tiers:
 
 An object's first pointer in memory is its **Map** (V8's term for hidden class/shape). Objects with the same shape share one Map. The Map stores each property's name and offset once. Instances store only their values.
 
-Property transitions form a tree. Adding property `x` then `y` moves through `{} -> {x} -> {x,y}` via a TransitionArray. Property order matters: `{x, y}` and `{y, x}` produce different shapes.
+Property transitions form a tree. Adding property `x` then `y` moves through `{} → {x} → {x,y}` via a TransitionArray. Property order matters: `{x, y}` and `{y, x}` produce different shapes.
 
-At a property access site like `o.name`, V8 caches (shape, offset) in the feedback vector. Next time, if the shape matches, it loads from the offset directly. This is O(1) instead of dictionary lookup. Cache states: Uninitialized -> Monomorphic (1 shape, fastest) -> Polymorphic (a few shapes) -> Megamorphic (too many, generic lookup). Stable shapes keep caches monomorphic.
+At a property access site like `o.name`, V8 caches (shape, offset) in the feedback vector. Next time, if the shape matches, it loads from the offset directly. This is O(1) instead of dictionary lookup. Cache states: Uninitialized → Monomorphic (1 shape, fastest) → Polymorphic (a few shapes) → Megamorphic (too many, generic lookup). Stable shapes keep caches monomorphic.
 
 TurboFan code is speculative. It assumes the types seen so far. When an assumption breaks (a value expected to be a small integer is not), the Deoptimizer aborts optimized code and falls back to Ignition bytecode. Type-unstable code can thrash (optimize, deopt, optimize, deopt repeatedly) and never reach peak speed.
 
@@ -348,8 +360,8 @@ Pointer compression (default since V8 v8.0): on 64-bit, the heap lives in a 4-GB
 V8's GC is **Orinoco**, generational. Key insight: most objects die young.
 
 - Heap is split into **young generation** (small, up to 16 MiB) and **old generation**.
-- **Minor GC (Scavenger)** on young gen: semi-space copying. Young gen is split From/To. Live objects are copied From -> To. Survivors of a prior GC are promoted to old gen.
-- **Major GC (Mark-Compact)** on whole heap: mark reachable -> sweep dead gaps -> compact (defragment).
+- **Minor GC (Scavenger)** on young gen: semi-space copying. Young gen is split From/To. Live objects are copied From → To. Survivors of a prior GC are promoted to old gen.
+- **Major GC (Mark-Compact)** on whole heap: mark reachable → sweep dead gaps → compact (defragment).
 - **Tri-color marking**: objects are white (undiscovered), grey (found, on worklist, fields not scanned), black (fully scanned). Marking ends when no grey remain. Leftover white is garbage. Invariant: no black points to white.
 - **Incremental + concurrent + parallel marking** spreads work across helper threads. Write barriers maintain the invariant and track old-to-new pointers.
 
@@ -359,7 +371,7 @@ This is why allocating many short-lived objects in a hot path hurts: it feeds th
 
 ## Real World Example
 
-**CRM: per-session user state.** A sales dashboard loads 1000 leads. Each lead has an "assign to me" button. When clicked, it calls an API, then updates that lead's status. You implement this with a factory:
+**CRM: per-session user state.** A sales dashboard loads 1,000 leads. Each lead has an "assign to me" button. When clicked, it calls an API, then updates that lead's status. You implement this with a factory:
 
 ```js
 function makeLeadController(leadId, initialStatus) {
@@ -385,7 +397,7 @@ function makeLeadController(leadId, initialStatus) {
 const controllers = leads.map(l => makeLeadController(l.id, l.status));
 ```
 
-Each `makeLeadController` call creates a separate closure environment. `status` and `retryCount` are private to that lead. No two leads share state. If you render 1000 leads, you get 1000 independent closure environments in the heap. Clicking "assign" on lead 42 only affects lead 42's `status` cell.
+Each `makeLeadController` call creates a separate closure environment. `status` and `retryCount` are private to that lead. No two leads share state. If you render 1,000 leads, you get 1,000 independent closure environments in the heap. Clicking "assign" on lead 42 only affects lead 42's `status` cell.
 
 This pattern appears everywhere: React hooks (`useState` is essentially a factory that returns `[value, setter]` where the setter closes over a state cell), event handlers in lists, per-request controllers in Express middleware, widget state in dashboards.
 
@@ -457,7 +469,7 @@ Classes use property access (IC-friendly, O(1) after monomorphic). Closures use 
 
 Primitives like numbers are stored directly in the stack frame. Objects are stored in the heap, and the frame holds a reference to them. When you copy a variable holding an object, you copy the reference, not the object itself.
 
-A closure happens when an inner function uses variables from an outer function, and the inner function outlives the outer function. The engine keeps the outer function's environment alive in the heap so the inner function can still access those variables. This is why `useState` works in React the setter closes over a state cell that persists across renders."
+A closure happens when an inner function uses variables from an outer function, and the inner function outlives the outer function. The engine keeps the outer function's environment alive in the heap so the inner function can still access those variables. This is why `useState` works in React — the setter closes over a state cell that persists across renders."
 
 ### Senior variant
 
@@ -475,7 +487,7 @@ Practical implications: every function in JavaScript is a closure (it captures i
 
 **1. Closure lifecycles in component trees.** Every component render allocates closure environments for event handlers, effects, and callbacks. If those closures capture the entire component scope (props, state, derived values), a single leaked closure can keep an entire subtree alive. I enforce patterns that minimize captured scope: pass primitives to callbacks instead of objects, use refs for values that change frequently, and clean up subscriptions in `useEffect` returns. This is not micro-optimization. A leaked closure in a list component that re-renders 500 times doubles the memory retained per render cycle.
 
-**2. Stack depth as a scalability boundary.** The fixed stack size (~1 MB) means deep recursion is off the table for production code. I mandate that any operation that can exceed 1000 nested calls uses an iterative approach or a trampoline. The CRM dashboard crash in the problem section is exactly this: recursive tree walking without a depth check. This becomes a team standard: recursion is for prototypes only.
+**2. Stack depth as a scalability boundary.** The fixed stack size (~1 MB) means deep recursion is off the table for production code. I mandate that any operation that can exceed 1,000 nested calls uses an iterative approach or a trampoline. The CRM dashboard crash in the problem section is exactly this: recursive tree walking without a depth check. This becomes a team standard: recursion is for prototypes only.
 
 **3. GC pause budgets.** V8's Orinoco GC is generational and concurrent, but it still pauses. Allocating many short-lived objects on every interaction (creating new objects in render, dispatching Redux actions that clone entire state trees) feeds the young-generation scavenger. On low-end mobile devices, GC time above 16 ms per frame causes visible jank. I set team budgets: no more than one new object allocation per event handler unless cached. Use object pooling for hot paths. Prefer immutable updates that share structure (Immer, immutable.js) over full copies.
 
@@ -487,23 +499,23 @@ The runtime model determines what performance patterns are even possible. Unders
 
 **Q1: Where does the object `{ name: "Ada" }` live, and when is it freed?**
 
-The binding `owner` lives in makeAccount's stack frame. The object itself lives in the heap. It is freed not when makeAccount returns but when the GC proves nothing references it. The closure returned by makeAccount keeps the environment, and therefore the object, reachable. So it persists across multiple calls to `d()`.
+The binding `owner` lives in makeAccount's stack frame as a pointer (address) to the heap. The object itself — `{ name: "Ada" }` — lives in the heap. It is freed when the garbage collector proves nothing references it anymore. Normally, when makeAccount returns and its frame pops, the object would be unreachable and collected. But here, the closure returned by makeAccount stores a `[[Environment]]` reference to makeAccount's environment record, which includes the `owner` binding. That environment record points to the heap object. As long as someone holds the returned `deposit` function (the variable `d`), the environment stays reachable, and the object stays alive. The GC cannot reclaim it. See Ch 03 for how React hooks use the same closure mechanism to keep state cells alive across renders.
 
 **Q2: Why does calling `d(50)` then `d(25)` give 175 and not 125?**
 
-Each `makeAccount` call creates one environment with one `balance` cell. The returned `deposit` function closes over that cell. Repeated calls to that same `deposit` mutate the same `balance` cell, so they accumulate. A second `makeAccount` call would produce a separate cell with its own `balance`. `d(50)` sets balance to 150. `d(25)` reads that 150, adds 25, stores 175.
+Each `makeAccount` call creates exactly one environment with one `balance` cell. The returned `deposit` function closes over that specific cell. When you call `d(50)`, the closure walks the scope chain, finds `balance = 100` in the captured environment, adds 50, and stores `150` back in the same cell. When you call `d(25)`, the same closure walks the same scope chain, finds `balance = 150` (the updated value), adds 25, and stores `175`. The key insight: both calls share one `balance` cell because they reference the same closure environment. A second `makeAccount("Bob")` call would create a separate environment with its own `balance` cell, completely independent. This is the factory pattern — each invocation produces an isolated stateful unit. See Ch 05 for how React's `useState` uses this exact pattern to give each component its own state.
 
 **Q3: Is JavaScript pass-by-value or pass-by-reference?**
 
-Always by value. For objects, the value is an address. Use the reassign-vs-mutate test: reassigning the parameter inside a function never affects the caller's variable. Mutating the object does affect the caller because both names hold the same address. True pass-by-reference would let you reassign the caller's variable from inside the function. JavaScript does not have that.
+Always pass-by-value. For objects, the value being passed is a memory address (a pointer to the heap object). The reassign-vs-mutate test proves it: if you reassign the parameter inside a function (`param = newObj`), the caller's variable is unaffected — the caller still points to the original object. That means the address was copied, not shared by reference. However, if you mutate the object through the parameter (`param.key = val`), the caller sees the change because both the parameter and the caller hold the same address pointing to the same heap object. True pass-by-reference (as in C++ or Rust) would let you reassign the caller's variable from inside the function. JavaScript does not have that. The confusion arises because "pass the reference" sounds like pass-by-reference, but it is really "pass the value of the reference" — the address is copied.
 
 **Q4: What exactly causes `Maximum call stack size exceeded`, and why is it a stack error and not a heap error?**
 
-The call stack has a fixed maximum size (roughly 1 MB per thread in V8). Each function call pushes a frame containing locals, parameters, and return address. Excessive recursion pushes frame after frame with no pops. When the stack pointer would exceed the reserved memory region, the engine aborts. It is a stack error because the stack region is finite and contiguous. You cannot grow it dynamically. The heap can grow (up to system memory limits), so a heap error would be a different failure mode (out of memory).
+The call stack has a fixed maximum size, typically around 1 MB per thread in V8. Each function call pushes a frame containing the return address, local variables, and parameters. Excessive recursion pushes frame after frame without popping any. When the stack pointer would exceed the reserved memory region, the engine throws a `RangeError` with the message "Maximum call stack size exceeded." It is a stack error because the stack is a contiguous, fixed-size memory region allocated per thread. You cannot grow it dynamically — the size is set when the thread starts. The heap, by contrast, is dynamic and can grow up to system memory limits (subject to V8's heap constraints). A heap error would be an out-of-memory condition, which is a different failure mode entirely. The stack's fixed size is a deliberate tradeoff: stack allocation is O(1) and cache-friendly, but deep recursion is inherently limited.
 
 **Q5: Two `useState`-like counters made by the same factory share or do not share state? Tie to the closure model.**
 
-They do not share state. Each factory call creates a separate environment with its own `count` cell. The returned function closes over its own environment. Two calls to the factory produce two independent cells. This is exactly the `makeAccount` model: each call creates its own environment. `x = counter(); y = counter(); x(); y();` produce different counts because `x`'s closure references a different environment cell than `y`'s.
+They do not share state. Each factory call creates a separate execution context with its own environment record. The returned function closes over that specific environment via its `[[Environment]]` slot. Two calls to the factory produce two independent environment records, each with its own `count` cell. When `x = counter()` and `y = counter()`, `x`'s closure references environment #1's `count`, and `y`'s closure references environment #2's `count`. Calling `x()` increments #1's cell. Calling `y()` increments #2's cell. They are completely isolated. This is exactly the `makeAccount` model from earlier in this chapter. In React, each component instance gets its own Fiber with its own hook state (Ch 05), so two instances of the same component never share state — the same closure isolation principle applied at the framework level.
 
 ---
 
@@ -525,9 +537,9 @@ They do not share state. Each factory call creates a separate environment with i
 - **Scope chain:** `[[OuterEnv]]` linked list. Walked at lookup time. Fixed at definition time (lexical).
 - **Closure:** Function + `[[Environment]]` reference. Environment survives creator's frame pop. GC keeps it alive because function references it.
 - **`this`:** Field in Function Environment Record. Arrow functions = `lexical` (inherit from outer). Method calls = reference base. Derived class before `super()` = `uninitialized`.
-- **V8 pipeline:** Scanner -> Parser -> Ignition (bytecode) -> Sparkplug (baseline JIT) -> Maglev (mid JIT) -> TurboFan (peak JIT). Deoptimization falls back to Ignition.
+- **V8 pipeline:** Scanner → Parser → Ignition (bytecode) → Sparkplug (baseline JIT) → Maglev (mid JIT) → TurboFan (peak JIT). Deoptimization falls back to Ignition.
 - **Hidden Classes (Maps):** Objects with same shape share Map with property offsets. Transitions form a tree. Property order matters for shape.
-- **Inline Caches:** Cache (shape, offset) at access site. States: Uninitialized -> Monomorphic -> Polymorphic -> Megamorphic.
+- **Inline Caches:** Cache (shape, offset) at access site. States: Uninitialized → Monomorphic → Polymorphic → Megamorphic.
 - **Tagged values:** Low bit 0 = Smi (31-bit int inline). Low bit 1 = heap pointer.
 - **GC (Orinoco):** Generational (young/old). Minor GC copies survivors. Major GC mark-sweep-compact. Tri-color marking. Incremental + concurrent.
 - **Pass-by-value:** Always. For objects, value is address. Test: reassign param does not affect caller. Mutate does.

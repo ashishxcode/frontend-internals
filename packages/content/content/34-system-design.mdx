@@ -1,0 +1,992 @@
+---
+title: "Frontend System Design"
+chapter: "34"
+part: "System Design"
+description: "Component libraries, real-time systems, design systems, architecture decisions"
+---
+
+## The Problem That Hooks You
+
+System design interviews are where SDE-2 candidates fail most. You can code well. You know React, hooks, performance optimization. Then the interviewer says "Design a component library" or "Design a real-time notification system" and you freeze.
+
+You start writing code. You talk about useState and useEffect. The interviewer looks bored. You realize too late that this isn't a coding problem — it's a thinking problem. You needed to clarify requirements, define tradeoffs, and make architectural decisions. Instead, you jumped straight to implementation.
+
+The gap isn't technical knowledge. It's architectural thinking — the ability to zoom out, see the whole system, and make decisions that contain future change.
+
+## Why Existing Solution Failed
+
+Most developers only build features, not systems. You add a new page, wire up an API, handle loading states, ship it. Repeat for three years. You've built 50 features but never designed a system.
+
+System design requires a different muscle. You need to think about:
+- **Scale**: What happens when this serves 10 teams instead of 1?
+- **Reuse**: What if another project needs the same thing?
+- **Tradeoffs**: Why this approach instead of that one?
+- **Boundaries**: Where does one system end and another begin?
+- **Evolution**: What changes when requirements shift in 6 months?
+
+Without a framework, you default to what you know — coding. You describe components and props instead of making architectural decisions. The interviewer sees someone who can implement but cannot design.
+
+## The Mental Model: Building a City
+
+Think of frontend system design like building a city.
+
+**Zoning (Architecture)** — You decide where residential goes, where commercial goes, where industrial goes. You don't build a factory next to a school. In software, you decide what lives where: components, services, utilities, shared code.
+
+**Roads (Data Flow)** — You design how people move through the city. Main arteries for high traffic, side streets for local access. In software, this is how data flows: props down, events up, global state for cross-cutting concerns.
+
+**Utilities (Shared Services)** — Water, electricity, internet. Everyone needs them. You build them once, pipe them everywhere. In software: authentication, analytics, error tracking, theming. Build once, consume everywhere.
+
+**Building Codes (Standards)** — Every building must meet safety standards. Electrical codes, plumbing codes, fire codes. In software: coding standards, accessibility requirements, testing mandates, documentation rules.
+
+**The one core insight**: **System design = making decisions that contain future change.** A zoning decision today prevents a factory from appearing next to a school tomorrow. A data flow decision today prevents a spaghetti-mess refactor in 6 months.
+
+When the interviewer asks "Design a notification system," they're asking: where do you put the factory? Which roads handle the traffic? What utilities does it need? What codes must it follow?
+
+## The Framework: 5 Steps
+
+A repeatable approach for any frontend system design question:
+
+### Step 1: Clarify Requirements
+
+Before drawing anything, ask questions. Separate functional from non-functional.
+
+**Functional** — What does the system DO?
+- "Design a component library" → What components? Who uses it? What's the design language?
+- "Design a notification system" → What types of notifications? Real-time? How many users?
+
+**Non-functional** — What are the QUALITY attributes?
+- Performance: How fast must it load? How many items must it handle?
+- Accessibility: WCAG level? Screen reader support?
+- Scale: One team or twenty? One app or many?
+- Offline: Must it work without network?
+
+Write the requirements down. Literally. On a whiteboard or shared doc. This shows the interviewer you think systematically.
+
+```text
+Functional:
+- Button, Input, Modal, Table, Select components
+- Theming support (light/dark)
+- TypeScript-first
+
+Non-functional:
+- Tree-shakeable (import only what you use)
+- Accessible (WCAG 2.1 AA)
+- 50+ developers using it
+- Versioned with semver
+- Works with React 18+
+```
+
+### Step 2: Define the API Contract
+
+Before designing internals, define the external interface. How do consumers use your system?
+
+This is where most candidates skip ahead. They start talking about implementation. The API contract comes first because it defines what you're building, not how you're building it.
+
+```jsx
+// Component Library API contract
+<Button variant="primary" size="md" loading={false}>Save</Button>
+<Select options={countries} value={selected} onChange={setSelected} />
+<Table columns={columns} data={rows} sortable pagination />
+
+// Notification System API contract
+useNotifications() // returns { notifications, unreadCount, markRead, clearAll }
+<NotificationProvider config={{ wsUrl, reconnectInterval }} />
+```
+
+### Step 3: Design the Component/Module Structure
+
+Decide what the major pieces are and how they relate. This is the zoning decision.
+
+```text
+Component Library:
+├── tokens/          (design tokens: colors, spacing, typography)
+├── primitives/      (Button, Input, Select — atomic, no business logic)
+├── composites/      (DataTable, Form, DatePicker — composed from primitives)
+├── patterns/        (auth flows, search, CRUD — full-page patterns)
+└── utils/           (clsx, useControllableState, forwardRef helpers)
+```
+
+### Step 4: Choose State Management Approach
+
+Where does state live? What's the source of truth? How do components communicate?
+
+For most systems, the answer is local state + context + URL state. Avoid global state unless you have a clear reason.
+
+```jsx
+// Component Library: almost no global state
+// Each component manages its own state internally
+// Theme is the one exception — context for theme provider
+
+// Notification System: global state makes sense
+// Notifications are cross-cutting — every page might show them
+const NotificationContext = createContext(null);
+
+// Data Table: URL state for shareable state
+// Sorting, filtering, pagination should survive page refresh
+const [searchParams, setSearchParams] = useSearchParams();
+```
+
+### Step 5: Handle Edge Cases
+
+This is where interviews are won or lost. Edge cases show you've shipped real systems.
+
+- **Loading**: Skeleton screens, not spinners. Match the final layout.
+- **Error**: Specific error messages, retry buttons, fallback UIs.
+- **Empty**: No data ≠ blank screen. Show a message with a call to action.
+- **Offline**: Cache last known state, show offline indicator, queue mutations.
+- **Accessibility**: Focus management, keyboard navigation, screen reader announcements.
+- **Responsiveness**: How does it look on mobile? When does it collapse?
+- **Performance**: Virtualization for long lists, code splitting, lazy loading.
+
+## System Design Problem 1: Component Library / Design System
+
+The most common frontend system design question. Here's how to approach it.
+
+### Token System
+
+Design tokens are the atoms of your design system. They define the visual language in a platform-agnostic way.
+
+```js
+// tokens/colors.js
+export const colors = {
+  blue: {
+    50: '#eff6ff',
+    100: '#dbeafe',
+    500: '#3b82f6',
+    600: '#2563eb',
+    900: '#1e3a5f',
+  },
+  gray: {
+    50: '#f9fafb',
+    100: '#f3f4f6',
+    500: '#6b7280',
+    900: '#111827',
+  },
+  semantic: {
+    success: '{colors.green.500}',
+    error: '{colors.red.500}',
+    warning: '{colors.amber.500}',
+  },
+};
+
+// tokens/spacing.js
+export const spacing = {
+  0: '0px',
+  1: '4px',
+  2: '8px',
+  3: '12px',
+  4: '16px',
+  6: '24px',
+  8: '32px',
+  12: '48px',
+};
+
+// tokens/typography.js
+export const typography = {
+  fontFamily: {
+    sans: 'Inter, system-ui, sans-serif',
+    mono: 'JetBrains Mono, monospace',
+  },
+  fontSize: {
+    xs: '0.75rem',
+    sm: '0.875rem',
+    base: '1rem',
+    lg: '1.125rem',
+    xl: '1.25rem',
+    '2xl': '1.5rem',
+  },
+};
+```
+
+Tokens solve the "why does this button look different in that app?" problem. Every visual decision is centralized. Change the token, change it everywhere.
+
+### Component API Design
+
+The API surface determines adoption. Bad API = developers fork your component and maintain their own version.
+
+```jsx
+// BAD: Too many props, hard to extend
+<Alert
+  type="error"
+  title="Delete failed"
+  message="Could not delete the item"
+  showIcon
+  closable
+  onClose={handleClose}
+  action={<Button onClick={retry}>Retry</Button>}
+  className="my-alert"
+/>
+
+// GOOD: Compound components — compose the pieces you need
+<Alert variant="error" onClose={handleClose}>
+  <Alert.Icon name="error" />
+  <Alert.Title>Delete failed</Alert.Title>
+  <Alert.Description>Could not delete the item</Alert.Description>
+  <Alert.Action>
+    <Button onClick={retry}>Retry</Button>
+  </Alert.Action>
+</Alert>
+```
+
+Compound components give consumers control over structure without growing the prop surface. The Alert component doesn't need `showIcon`, `title`, `message`, `action` props — the consumer decides what to include.
+
+```jsx
+// Compound component implementation
+const AlertContext = createContext(null);
+
+function Alert({ variant, onClose, children }) {
+  return (
+    <AlertContext.Provider value={{ variant, onClose }}>
+      <div role="alert" className={`alert alert--${variant}`}>
+        {children}
+      </div>
+    </AlertContext.Provider>
+  );
+}
+
+Alert.Icon = function AlertIcon({ name }) {
+  const { variant } = useContext(AlertContext);
+  return <Icon name={name || variant} className="alert__icon" />;
+};
+
+Alert.Title = function AlertTitle({ children }) {
+  return <h4 className="alert__title">{children}</h4>;
+};
+
+Alert.Description = function AlertDescription({ children }) {
+  return <p className="alert__description">{children}</p>;
+};
+
+Alert.Action = function AlertAction({ children }) {
+  return <div className="alert__action">{children}</div>;
+};
+```
+
+### Versioning and Breaking Changes
+
+This is the question that separates mid-level from senior. How do you evolve the API without breaking existing consumers?
+
+```text
+Strategy: Semantic versioning + deprecation cycle
+
+1. New feature: minor version (1.0.0 → 1.1.0)
+   - Add new prop, new component, new token
+   - No breaking changes
+
+2. Breaking change: major version (1.x → 2.0.0)
+   - Remove prop, rename component, change default behavior
+   - Requires deprecation period
+
+3. Deprecation cycle:
+   - v1.5: Add `deprecated` warning for old API
+   - v1.8: Log console.warn when old API is used
+   - v2.0: Remove old API
+
+4. Codemods for major versions
+   - Write a jscodeshift transform that rewrites old API to new
+   - Consumers run one command to upgrade
+```
+
+### Documentation
+
+Storybook is the standard. But documentation is more than stories — it's decisions.
+
+```jsx
+// Button.stories.jsx
+export default {
+  title: 'Components/Button',
+  component: Button,
+  argTypes: {
+    variant: {
+      control: 'select',
+      options: ['primary', 'secondary', 'ghost', 'danger'],
+    },
+    size: { control: 'select', options: ['sm', 'md', 'lg'] },
+  },
+};
+
+export const Primary = {
+  args: { children: 'Save', variant: 'primary' },
+};
+
+export const Loading = {
+  args: { children: 'Saving...', variant: 'primary', loading: true },
+};
+
+export const AsLink = {
+  args: { children: 'Go to docs', href: '/docs', variant: 'ghost' },
+};
+```
+
+### Accessibility Standards
+
+Accessibility is not optional in a design system. Every component must meet WCAG 2.1 AA.
+
+```jsx
+// Button accessibility checklist
+// 1. Keyboard: focusable, activatable with Enter/Space
+// 2. Role: native <button> element (implicit role)
+// 3. Label: text content or aria-label
+// 4. State: aria-disabled, aria-busy for loading
+// 5. Focus visible: outline on keyboard focus, hidden on mouse click
+
+<Button
+  disabled={isDisabled}
+  aria-disabled={isDisabled}
+  aria-busy={loading}
+  // focus-visible handled via CSS
+>
+  {loading && <Spinner aria-hidden="true" />}
+  {children}
+</Button>
+```
+
+## System Design Problem 2: Real-Time Notification System
+
+Notifications are deceptively complex. The UI is simple — a bell icon with a badge. The system underneath involves connections, state management, delivery guarantees, and offline handling.
+
+### Transport: WebSocket vs SSE vs Polling
+
+```text
+Polling:
+  Client → Server: "Any new notifications?" (every 30s)
+  Server → Client: "No" / "Yes, here are 3"
+  Pros: Simple, works everywhere, no connection management
+  Cons: Wasteful (most responses are "no"), delay up to polling interval
+  Use: Low-frequency updates, simple requirements
+
+Server-Sent Events (SSE):
+  Client → Server: "Notify me" (one connection)
+  Server → Client: Push events as they happen
+  Pros: Simple, auto-reconnect, built into browser (EventSource)
+  Cons: Unidirectional (server → client only), text-based
+  Use: Notifications, live feeds, when you don't need client→server over same channel
+
+WebSocket:
+  Client ↔ Server: Bidirectional persistent connection
+  Pros: Full duplex, binary support, low latency
+  Cons: Complex (connection management, heartbeats, reconnection)
+  Use: Chat, collaborative editing, gaming, when you need bidirectional real-time
+```
+
+For notifications, SSE is usually the right choice. You need server→client push, not bidirectional. WebSocket is overkill.
+
+### Connection Management
+
+```jsx
+class NotificationConnection {
+  constructor(url, { reconnectInterval = 3000, maxRetries = 5 } = {}) {
+    this.url = url;
+    this.reconnectInterval = reconnectInterval;
+    this.maxRetries = maxRetries;
+    this.retryCount = 0;
+    this.eventSource = null;
+  }
+
+  connect() {
+    this.eventSource = new EventSource(this.url);
+
+    this.eventSource.onopen = () => {
+      this.retryCount = 0; // Reset on successful connection
+    };
+
+    this.eventSource.onmessage = (event) => {
+      const notification = JSON.parse(event.data);
+      this.onNotification(notification);
+    };
+
+    this.eventSource.onerror = () => {
+      this.eventSource.close();
+      this.scheduleReconnect();
+    };
+  }
+
+  scheduleReconnect() {
+    if (this.retryCount >= this.maxRetries) {
+      this.onMaxRetriesReached();
+      return;
+    }
+
+    // Exponential backoff with jitter
+    const delay = Math.min(
+      this.reconnectInterval * Math.pow(2, this.retryCount) + Math.random() * 1000,
+      30000
+    );
+    this.retryCount++;
+
+    setTimeout(() => this.connect(), delay);
+  }
+
+  disconnect() {
+    this.eventSource?.close();
+  }
+}
+```
+
+The reconnect strategy is critical. Exponential backoff prevents hammering the server. Jitter prevents thundering herd (all clients reconnecting at the same time). Max retries prevent infinite loops when the server is permanently down.
+
+### State Management for Notifications
+
+```jsx
+// Notification state shape
+const initialState = {
+  items: [],           // All notifications
+  unreadCount: 0,      // Quick access for badge
+  isConnected: false,  // Connection status
+  error: null,         // Connection error
+};
+
+function notificationReducer(state, action) {
+  switch (action.type) {
+    case 'ADD_NOTIFICATION':
+      return {
+        ...state,
+        items: [action.payload, ...state.items],
+        unreadCount: state.unreadCount + 1,
+      };
+
+    case 'MARK_READ':
+      return {
+        ...state,
+        items: state.items.map(item =>
+          item.id === action.payload ? { ...item, read: true } : item
+        ),
+        unreadCount: Math.max(0, state.unreadCount - 1),
+      };
+
+    case 'MARK_ALL_READ':
+      return {
+        ...state,
+        items: state.items.map(item => ({ ...item, read: true })),
+        unreadCount: 0,
+      };
+
+    case 'CLEAR_ALL':
+      return { ...state, items: [], unreadCount: 0 };
+
+    case 'SET_CONNECTED':
+      return { ...state, isConnected: action.payload, error: null };
+
+    case 'SET_ERROR':
+      return { ...state, error: action.payload, isConnected: false };
+
+    default:
+      return state;
+  }
+}
+```
+
+### Delivery Guarantees
+
+Notifications need at-least-once delivery. Better to show a duplicate than to miss one.
+
+```text
+Strategy:
+1. Server assigns monotonically increasing IDs to notifications
+2. Client tracks last seen ID (stored in localStorage)
+3. On reconnect, client sends "give me everything since ID X"
+4. Server sends missed notifications
+5. Client deduplicates by ID before adding to state
+
+// On reconnect
+const lastSeenId = localStorage.getItem('lastNotificationId');
+eventSource.addEventListener('open', () => {
+  eventSource.send(JSON.stringify({ since: lastSeenId }));
+});
+```
+
+### UI Patterns
+
+```jsx
+// Bell icon with badge
+function NotificationBell() {
+  const { unreadCount } = useNotifications();
+
+  return (
+    <button className="notification-bell" aria-label={`${unreadCount} unread notifications`}>
+      <BellIcon />
+      {unreadCount > 0 && (
+        <span className="notification-badge" aria-hidden="true">
+          {unreadCount > 99 ? '99+' : unreadCount}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// Toast notification (transient)
+function NotificationToast({ notification, onDismiss }) {
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, 5000);
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
+  return (
+    <div role="status" aria-live="polite" className="notification-toast">
+      <p>{notification.message}</p>
+      <button onClick={onDismiss} aria-label="Dismiss">✕</button>
+    </div>
+  );
+}
+```
+
+## System Design Problem 3: Data Table with Server-Side Operations
+
+Data tables are where frontend system design meets backend reality. The table is the easy part. Pagination, sorting, filtering, and caching are the hard parts.
+
+### Pagination: Cursor vs Offset
+
+```text
+Offset-based:
+  GET /api/users?page=3&limit=20
+  Pros: Simple, allows "jump to page N"
+  Cons: Inconsistent results when data changes (items shift between pages)
+  Use: Admin dashboards, known dataset sizes
+
+Cursor-based:
+  GET /api/users?cursor=eyJpZCI6MTAwfQ&limit=20
+  Pros: Consistent results, efficient for large datasets, no skipped/duplicate items
+  Cons: Cannot jump to arbitrary page, "page N" concept doesn't exist
+  Use: Infinite scroll, feeds, large datasets
+```
+
+```jsx
+// Cursor-based pagination hook
+function useInfiniteTable({ queryKey, fetchFn, limit = 20 }) {
+  return useInfiniteQuery({
+    queryKey,
+    queryFn: ({ pageParam }) => fetchFn({ cursor: pageParam, limit }),
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    initialPageParam: undefined,
+  });
+}
+
+// Usage
+const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteTable({
+  queryKey: ['users', filters],
+  fetchFn: ({ cursor, limit }) =>
+    fetch(`/api/users?cursor=${cursor}&limit=${limit}`).then(r => r.json()),
+});
+
+// Flat array from all pages
+const users = data?.pages.flatMap(page => page.users) ?? [];
+```
+
+### Sorting and Filtering
+
+Sorting and filtering should be URL state. This makes them shareable, bookmarkable, and survive page refresh.
+
+```jsx
+function useTableState() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const sorting = useMemo(() => {
+    const sort = searchParams.get('sort');
+    const order = searchParams.get('order');
+    if (!sort) return [];
+    return [{ id: sort, desc: order === 'desc' }];
+  }, [searchParams]);
+
+  const filtering = useMemo(() => {
+    const filter = searchParams.get('filter');
+    return filter ? JSON.parse(filter) : {};
+  }, [searchParams]);
+
+  const setSorting = useCallback((updater) => {
+    const newSorting = typeof updater === 'function' ? updater(sorting) : updater;
+    setSearchParams(prev => {
+      if (newSorting.length === 0) {
+        prev.delete('sort');
+        prev.delete('order');
+      } else {
+        prev.set('sort', newSorting[0].id);
+        prev.set('order', newSorting[0].desc ? 'desc' : 'asc');
+      }
+      return prev;
+    });
+  }, [sorting, setSearchParams]);
+
+  return { sorting, filtering, setSorting };
+}
+```
+
+### Virtualization
+
+For tables with 1000+ rows, virtualization is mandatory. Only render what's visible.
+
+```jsx
+import { useVirtualizer } from '@tanstack/react-virtual';
+
+function VirtualTable({ rows, columns }) {
+  const parentRef = useRef(null);
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 48, // row height in px
+    overscan: 10,
+  });
+
+  return (
+    <div ref={parentRef} className="table-container" style={{ overflow: 'auto', height: '600px' }}>
+      <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+        {virtualizer.getVirtualItems().map(virtualRow => (
+          <div
+            key={virtualRow.key}
+            style={{
+              position: 'absolute',
+              top: virtualRow.start,
+              height: virtualRow.size,
+              width: '100%',
+            }}
+            className="table-row"
+          >
+            {columns.map(col => (
+              <div key={col.id} className="table-cell">
+                {col.accessor(rows[virtualRow.index])}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+### Caching Strategy
+
+```jsx
+// TanStack Query caching for table data
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,        // Data is fresh for 30 seconds
+      gcTime: 5 * 60_000,       // Keep in cache for 5 minutes
+      refetchOnWindowFocus: true, // Refetch when tab regains focus
+    },
+  },
+});
+
+// Prefetch next page
+const prefetchNextPage = useCallback(() => {
+  if (hasNextPage && !isFetchingNextPage) {
+    queryClient.prefetchInfiniteQuery({
+      queryKey: ['users', filters],
+      queryFn: ({ pageParam }) => fetchUsers({ cursor: pageParam }),
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      pages: 1,
+    });
+  }
+}, [hasNextPage, isFetchingNextPage, filters]);
+```
+
+### Optimistic Updates for Mutations
+
+When a user deletes a row, don't wait for the server. Remove it immediately, revert on error.
+
+```jsx
+const deleteMutation = useMutation({
+  mutationFn: (id) => fetch(`/api/users/${id}`, { method: 'DELETE' }),
+  onMutate: async (id) => {
+    await queryClient.cancelQueries({ queryKey: ['users'] });
+
+    const previous = queryClient.getQueryData(['users']);
+    queryClient.setQueryData(['users'], (old) =>
+      old.filter(user => user.id !== id)
+    );
+
+    return { previous };
+  },
+  onError: (err, id, context) => {
+    queryClient.setQueryData(['users'], context.previous);
+    toast.error('Failed to delete user');
+  },
+  onSettled: () => {
+    queryClient.invalidateQueries({ queryKey: ['users'] });
+  },
+});
+```
+
+## System Design Problem 4: Micro-Frontend Architecture
+
+The most controversial system design topic. Micro-frontends are rarely the right answer, but when they are, you need to know the tradeoffs.
+
+### When to Use
+
+Micro-frontends solve ONE problem: **deployment independence for large teams.** If your team has 30+ engineers working on the same frontend and deploys are bottlenecked, micro-frontends let each team deploy independently.
+
+If you have fewer than 10 engineers, don't do it. The overhead isn't worth it.
+
+```text
+Use micro-frontends when:
+✓ 30+ engineers on the same frontend
+✓ Teams own distinct business domains (payments, search, profile)
+✓ Deployment coupling is causing bottlenecks
+✓ Teams need different tech stacks (rare, but real)
+
+Don't use micro-frontends when:
+✗ Small team (< 10 engineers)
+✗ Single business domain
+✗ You want "clean architecture" — that's not what this solves
+✗ You're starting a new project — premature optimization
+```
+
+### Module Federation vs iframe vs Web Components
+
+```text
+iframe:
+  Pros: Complete isolation, any framework, simple
+  Cons: Performance (separate window context), poor UX (no shared routing), accessibility issues
+  Use: Embedding truly independent third-party content
+
+Web Components:
+  Pros: Framework-agnostic, native browser APIs
+  Cons: Shadow DOM styling challenges, hydration complexity, limited SSR
+  Use: Design system shared across React/Vue/Angular apps
+
+Module Federation (Webpack 5 / Vite):
+  Pros: Shared dependencies, no duplication, unified routing
+  Cons: Version coordination, build-time coupling, complex configuration
+  Use: Most micro-frontend scenarios
+```
+
+### Shared Dependencies
+
+```js
+// webpack.config.js (host app)
+const { ModuleFederationPlugin } = require('webpack').container;
+
+module.exports = {
+  plugins: [
+    new ModuleFederationPlugin({
+      name: 'host',
+      remotes: {
+        payments: 'payments@https://payments.example.com/remoteEntry.js',
+        search: 'search@https://search.example.com/remoteEntry.js',
+      },
+      shared: {
+        react: { singleton: true, requiredVersion: '^18.0.0' },
+        'react-dom': { singleton: true, requiredVersion: '^18.0.0' },
+      },
+    }),
+  ],
+};
+```
+
+The `singleton: true` ensures only one copy of React loads. Without it, each micro-frontend bundles its own React, causing bugs (multiple React instances, hook failures).
+
+### Routing Across Micro-Frontends
+
+```jsx
+// Host app manages routing
+// Each micro-frontend owns its routes
+
+// Host app
+function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<Layout />}>
+        <Route path="search/*" element={<SearchApp />} />
+        <Route path="payments/*" element={<PaymentsApp />} />
+        <Route path="profile" element={<ProfileApp />} />
+      </Route>
+    </Routes>
+  );
+}
+
+// Each micro-frontend is a lazy-loaded route
+const SearchApp = React.lazy(() => import('search/SearchApp'));
+const PaymentsApp = React.lazy(() => import('payments/PaymentsApp'));
+```
+
+### State Sharing Between Apps
+
+State sharing is the hardest part. Keep it minimal.
+
+```jsx
+// Option 1: Custom events (simple, decoupled)
+window.dispatchEvent(new CustomEvent('app:user-updated', {
+  detail: { userId: 123, name: 'Ashish' }
+}));
+
+// Option 2: URL as state (shareable, survives refresh)
+// /search?q=react&sort=date&user=123
+
+// Option 3: Shared context provider (React-specific, tight coupling)
+// Only use for truly global concerns like auth
+```
+
+## Tradeoffs
+
+| Decision | Gain | Cost |
+|----------|------|------|
+| Compound components | Extensible API, less props | More setup code per component |
+| SSE over WebSocket | Simpler, auto-reconnect | Server→client only |
+| Cursor pagination | Consistent results | Cannot jump to page N |
+| Virtualization | Handles 100k+ rows | Complex scroll logic, fixed row height |
+| Micro-frontends | Deployment independence | Build complexity, shared deps |
+| Optimistic updates | Instant UI feel | Rollback complexity |
+| URL state for tables | Shareable, bookmarkable | More code than local state |
+| Design tokens | Consistency across apps | Initial setup investment |
+
+The most important tradeoff: **ease of initial implementation vs. ease of future change.** A quick solution is easy today but hard to change tomorrow. A well-designed system is harder today but easier to change forever.
+
+## Common Mistakes
+
+- **Jumping to implementation**: Start with requirements, not code. The interviewer wants to see your thinking process.
+- **Ignoring non-functional requirements**: Performance, accessibility, offline support — these separate senior from mid-level.
+- **One-size-fits-all solutions**: "Use Redux" for everything. State management should match the problem scope.
+- **Forgetting edge cases**: Loading, error, empty, offline. Every data component has four states.
+- **Over-engineering from the start**: Micro-frontends for a 5-person team. Design tokens for a single-page app. Match complexity to scale.
+- **No versioning strategy**: How do you evolve the API without breaking consumers? If you can't answer this, the design isn't complete.
+- **Ignoring accessibility**: WCAG compliance is a requirement, not a nice-to-have. Every component must be keyboard navigable and screen reader accessible.
+- **No error boundaries**: What happens when a micro-frontend crashes? The rest of the app must survive.
+
+## SDE-2 Interview Answer
+
+### Mid-level
+
+"I approach frontend system design in five steps. First, I clarify requirements — functional and non-functional. Second, I define the API contract before any implementation. Third, I design the component structure and module boundaries. Fourth, I choose state management based on scope — local state for most things, context for cross-cutting concerns, URL state for shareable state. Fifth, I handle edge cases: loading, error, empty, offline. For a component library, I'd start with a token system, design compound component APIs, set up Storybook, and define a versioning strategy with deprecation cycles."
+
+### Senior
+
+"I use a city-building mental model for system design. Zoning is architecture — where things live. Roads are data flow — how information moves. Utilities are shared services — build once, consume everywhere. Building codes are standards — accessibility, testing, documentation. I always start by clarifying requirements and defining the API contract. The API contract defines what I'm building, not how. I make decisions that contain future change — for example, compound components over configuration props, because compound components stay open to extension. I choose state management based on the problem scope: URL state for shareable state, local state for component state, global state only for truly cross-cutting concerns. I always address the four data states (loading, error, empty, data) and accessibility from day one, not as polish later."
+
+### Engineering Lead
+
+"I enforce a system design standard on the team. Every shared system — component library, data fetching layer, auth flow — must have: a token system, an API contract document, a versioning strategy, an accessibility audit, and a Storybook with all states documented. I review architectural decisions using a framework: what are we optimizing for (developer experience, performance, flexibility), what are we sacrificing, and how does this decision contain future change? I push the team to build systems, not just features. A feature is a page that works. A system is a reusable, versioned, accessible, documented building block that works across apps and survives team changes. I measure system quality by adoption: if developers are forking components instead of using them, our system design failed."
+
+## Follow-up Questions
+
+**Q1: How would you handle theming in a component library that supports both React and Vue?**
+Use **CSS custom properties** as the theming layer — they're framework-agnostic and resolve at runtime. Define tokens as CSS variables in a theme file. Both React and Vue components reference the same variables via `var(--color-primary)`. The framework-specific part is the theme provider: React uses a Context provider that sets `data-theme` on the root element; Vue uses a reactive provide/inject that does the same.
+
+```css
+/* tokens.css — shared across frameworks */
+[data-theme="light"] {
+  --color-primary: #3b82f6;
+  --color-surface: #ffffff;
+  --spacing-md: 16px;
+}
+[data-theme="dark"] {
+  --color-primary: #60a5fa;
+  --color-surface: #111827;
+}
+```
+
+```jsx
+// React theme provider
+function ThemeProvider({ theme, children }) {
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+  return children;
+}
+```
+
+```vue
+<!-- Vue theme provider -->
+<script setup>
+provide('theme', computed(() => props.theme));
+</script>
+```
+
+Both frameworks consume the same CSS tokens. The token definitions live in a shared `tokens/` directory. When you update a token, both React and Vue apps get the new value without rebuilding. This avoids maintaining duplicate theme logic in each framework.
+
+**Q2: Your real-time notification system needs to work offline. Users should see notifications they missed while disconnected. How do you design the synchronization?**
+Use a three-layer sync strategy: (1) **Persistent storage** — store notifications in IndexedDB with a monotonically increasing ID. This survives page reloads and works offline. (2) **Last-seen ID tracking** — on every connection, record the highest notification ID received. Store it in both IndexedDB and as a query parameter on reconnect. (3) **Server-side catch-up API** — when the client reconnects, it sends `GET /api/notifications?since={lastSeenId}`. The server returns all notifications created after that ID.
+
+```jsx
+// On reconnect
+const lastSeenId = await idb.get('lastNotificationId');
+const missed = await fetch(`/api/notifications?since=${lastSeenId}`);
+const notifications = await missed.json();
+
+// Deduplicate before adding to state
+const existingIds = new Set(state.items.map(n => n.id));
+const newNotifications = notifications.filter(n => !existingIds.has(n.id));
+
+// Update state and persistent storage
+dispatch({ type: 'ADD_NOTIFICATIONS', payload: newNotifications });
+await idb.put('lastNotificationId', newNotifications.at(-1)?.id ?? lastSeenId);
+```
+
+The server must support a "catch-up" query that returns all notifications since a given ID. This is simpler than full sync because notification IDs are monotonically increasing — no conflict resolution needed. If the server has purged old notifications, return a `410 Gone` with a message to refresh the full list.
+
+**Q3: You're designing a data table that needs to support server-side filtering across 50 columns. How do you prevent the URL from becoming unreadable?**
+Use **compressed filter encoding** in the URL. Instead of `?name=John&age=25&status=active&...` (50 potential params), encode the filter state as a Base64-encoded JSON string: `?f=eyJuYW1lIjoiSm9obiIsInN0YXR1cyI6ImFjdGl2ZSJ9`. The decoded value is a compact filter object.
+
+```jsx
+// Encode filter state to URL
+function useTableFilters() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const filters = useMemo(() => {
+    const encoded = searchParams.get('f');
+    if (!encoded) return {};
+    try {
+      return JSON.parse(atob(encoded));
+    } catch { return {}; }
+  }, [searchParams]);
+
+  const setFilters = useCallback((newFilters) => {
+    const encoded = btoa(JSON.stringify(newFilters));
+    setSearchParams({ f: encoded });
+  }, [setSearchParams]);
+
+  return { filters, setFilters };
+}
+```
+
+Additionally, support **filter presets** — save common filter combinations as named bookmarks (`?preset=active-users`). Presets are human-readable and shareable. For power users, provide a "copy link" button that generates the encoded URL. The URL is bookmarkable, shareable, and survives page refresh. The tradeoff: encoded URLs aren't human-readable, but users rarely read raw URLs — they share them.
+
+**Q4: Two micro-frontends need to share a user session. How do you handle authentication state without coupling them?**
+Use the **auth shell pattern**: the host application owns authentication. It authenticates the user via a shared auth service (OAuth/SSO), stores the session in a cookie (HttpOnly, SameSite=Lax), and passes a JWT to micro-frontends via the cookie. Each micro-frontend validates the JWT independently — they don't call the auth service directly.
+
+```text
+Host App
+  ├── Authenticates user → gets JWT + refresh token
+  ├── Sets HttpOnly cookie with JWT
+  ├── Passes JWT in Authorization header to micro-frontends
+  │
+Micro-Frontend A (Search)
+  ├── Reads JWT from cookie
+  ├── Validates signature (no network call)
+  ├── Extracts user info from JWT claims
+  └── Refreshes token via host app's /auth/refresh endpoint
+```
+
+For silent token refresh: the host app handles token refresh before expiration. When a micro-frontend's JWT expires, it calls the host's refresh endpoint (via a shared iframe or postMessage). The host refreshes the token and updates the cookie. Micro-frontends never manage refresh tokens — that's the host's responsibility. This keeps auth logic in one place while allowing each micro-frontend to validate tokens independently.
+
+**Q5: Your component library has 200 components. A breaking change in the Button component affects 40 apps. How do you manage this at scale?**
+Use a **deprecation lifecycle with codemods**: (1) **Deprecation warning** — in version N, add `console.warn` when the old API is used. Log which app and component instance triggered it. (2) **Codemod** — write a jscodeshift transform that rewrites old API to new API automatically. Publish it as an npm package: `npx @your-org/button-codemod`. (3) **Migration guide** — document the change, before/after examples, and the codemod command. (4) **Visual regression testing** — run Chromatic or Percy on the Button component before and after the change. Ensure visual output matches. (5) **Automated dependency analysis** — use tools like `madge` or `dependency-cruiser` to find all 40 apps that import Button. Send them a notification about the upcoming breaking change.
+
+```text
+Timeline:
+v2.5.0:  New API added alongside old API
+v2.6.0:  console.warn on old API usage
+v2.7.0:  Codemod published
+v3.0.0:  Old API removed (major version bump)
+```
+
+The key: never remove an API without a deprecation period and a codemod. The codemod is the difference between a 2-week migration (manual) and a 5-minute migration (automated). Visual regression testing catches cases where the codemod changes behavior subtly.
+
+## Mental Trigger
+
+"System design = decisions that contain future change."
+
+When you see a system design question, ask yourself: what decisions am I making today that will be hard to change in 6 months? Make those decisions deliberately, with clear tradeoffs. Don't let them happen by accident.
+
+## One Page Revision
+
+- System design = making decisions that contain future change.
+- City analogy: zoning (architecture), roads (data flow), utilities (shared services), building codes (standards).
+- 5-step framework: clarify requirements → API contract → module structure → state management → edge cases.
+- Component Library: tokens → compound component API → versioning with deprecation → Storybook → accessibility.
+- Notification System: SSE over WebSocket for server→client push → exponential backoff reconnect → at-least-once delivery → toast/badge UI.
+- Data Table: cursor pagination for consistency → URL state for sorting/filtering → virtualization for 1000+ rows → TanStack Query caching → optimistic mutations.
+- Micro-frontends: only for 30+ engineers with deployment coupling → Module Federation for shared deps → minimal state sharing → URL state preferred.
+- Edge cases: loading (skeleton), error (retry), empty (CTA), offline (cache + indicator).
+- Interview: Mid-level handles 5 steps. Senior uses city analogy and tradeoff reasoning. Lead enforces system design standards and measures adoption.
+- Trigger: "Decisions that contain future change."

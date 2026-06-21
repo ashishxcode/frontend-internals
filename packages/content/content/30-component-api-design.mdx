@@ -5,17 +5,23 @@ part: "Coding & Practice"
 description: "Button, Modal, Table, Select, Data Grid API contracts"
 ---
 
-## Problem
+## The Problem That Hooks You
 
 You need a Button component. You add variant, size, loading, disabled, onClick. Then someone needs it as a link. You add href. Then someone needs it as a router link. You add as prop. Soon you have 15 props. The API is inconsistent. Developers use your components wrong and file bugs.
 
-## Why Existing Solution Failed
+The problem isn't the code. It's that you designed the API as you went, reacting to needs instead of thinking about the contract.
 
-Most developers start coding components without defining the API contract first. They add props as needs arise. No categorization. No thought about state ownership. No planning for accessibility. No consideration of the four component layers. The result is an API surface that fights against the consumer.
+## Why It Happens
 
-## Mental Model
+Most developers start coding components without defining the API contract first. They add props as needs arise. No categorization. No thought about state ownership. No planning for accessibility. The result is an API surface that fights against the consumer.
 
-A component's API is its CONTRACT. A well-designed component is easy to use correctly and hard to use incorrectly. Every prop serves exactly one purpose: styling, behavior, accessibility, or layout. If a prop does two things, split it. Always support controlled and uncontrolled because you do not know who owns the value. Forward refs because you do not know who needs focus or measurement.
+## The One Insight
+
+**A component's API is its contract.** A well-designed component is easy to use correctly and hard to use incorrectly. Every prop serves exactly one purpose: styling, behavior, accessibility, or layout. If a prop does two things, split it.
+
+Think of it like a restaurant menu. A good menu has categories (appetizers, mains, desserts), each item has a clear description, and you never have to guess what you're ordering. A bad menu lists 50 items with vague descriptions and no structure.
+
+Always support controlled and uncontrolled because you don't know who owns the value. Forward refs because you don't know who needs focus or measurement.
 
 ## Visualization
 
@@ -46,22 +52,21 @@ flowchart TB
   Ownership --> Layers
 ```
 
-## Engine Simulation
+## The Button Walkthrough
 
-When a user renders `<Button variant="primary" loading={true} disabled={false}>Save</Button>`, here is the internal execution:
+When a user renders `<Button variant="primary" loading={true} disabled={false}>Save</Button>`, here's what happens internally:
 
 1. Button receives props via forwardRef.
 2. It computes `isDisabled = disabled || loading` (true).
 3. It determines the HTML element: `as` prop defaults to 'button', unless `href` is present (then 'a').
 4. It builds className using clsx: 'btn', 'btn--primary', 'btn--md', 'btn--loading'.
 5. It renders the element with `aria-disabled={true}` and `aria-busy={true}`.
-6. It does NOT pass the HTML `disabled` attribute if the element is an `<a>` (anchor tags do not support it).
+6. It does NOT pass the HTML `disabled` attribute if the element is an `<a>` (anchor tags don't support it).
 7. It shows a spinner span with `aria-hidden="true"`.
 8. It hides the children text while loading with CSS.
 9. The onClick handler is set to undefined when disabled, preventing action.
 
 ```jsx
-// The actual implementation
 const Button = forwardRef(({
   variant = 'primary',
   size = 'md',
@@ -103,13 +108,13 @@ const Button = forwardRef(({
 });
 ```
 
-What happens internally: The `disabled` attribute only works on `<button>`, `<input>`, `<select>`, and `<textarea>`. When rendering as `<a>`, we use `aria-disabled` instead. This preserves keyboard focus on the link while preventing the click action. The loading state combines visual feedback (spinner) and behavioral prevention (disabled clicks). The `as` prop enables polymorphic rendering without losing type safety.
+The `disabled` attribute only works on `<button>`, `<input>`, `<select>`, and `<textarea>`. When rendering as `<a>`, we use `aria-disabled` instead. This preserves keyboard focus while preventing the click action.
 
-## Internal Implementation
+## The Building Blocks
 
 ### Controlled/Uncontrolled Pattern
 
-Every interactive component needs to support both controlled and uncontrolled modes. The consumer decides who owns the state. Use a shared hook:
+Every interactive component needs to support both modes. Use a shared hook:
 
 ```jsx
 function useControllableState({ value, defaultValue, onChange }) {
@@ -125,21 +130,15 @@ function useControllableState({ value, defaultValue, onChange }) {
 }
 ```
 
-What happens internally: When `value` is passed, the component ignores internal state and uses `value` directly. When `value` is undefined, it falls back to `useState(defaultValue)`. The `set` function always calls `onChange` so the parent stays notified regardless of mode. This hook enables every component below to support controlled + uncontrolled with no extra logic.
+When `value` is passed, the component ignores internal state. When `value` is undefined, it falls back to `useState(defaultValue)`.
 
 ### forwardRef for Escape Hatches
 
-Every interactive component should forward its ref to the DOM element. This lets parents focus, measure, scroll to, or position tooltips on the element. Form libraries like React Hook Form use refs to register inputs.
+Every interactive component should forward its ref to the DOM element. This lets parents focus, measure, scroll to, or position tooltips on the element.
 
 ### Portals for Overlays
 
-Components that need to break out of their parent's overflow or z-index context (Modal, Dropdown, Tooltip, Toast) use `createPortal` to render into `document.body`.
-
-```text
-Modal    → createPortal(jsx, document.body)
-Dropdown → createPortal(menu, document.body)
-Toast    → createPortal(container, document.body)
-```
+Components that break out of parent overflow or z-index context (Modal, Dropdown, Tooltip, Toast) use `createPortal` to render into `document.body`.
 
 ### Table with Column Config
 
@@ -176,21 +175,17 @@ type TableProps<T> = {
 };
 ```
 
-What happens internally: The Table never knows what data it renders. It delegates cell rendering to the `col.render(row)` function. This keeps the Table generic and reusable. The `rowKey` function generates unique identifiers for each row, which React uses for reconciliation. Native ARIA roles (`role="table"`, `role="rowgroup"`, `role="row"`, `role="columnheader"`, `role="cell"`) make the div-based table accessible to screen readers.
-
-### Design Decisions for Table
+The Table never knows what data it renders. It delegates cell rendering to `col.render(row)`. The `rowKey` function generates unique identifiers for reconciliation. Native ARIA roles make the div-based table accessible.
 
 | Decision | Why |
 |----------|-----|
 | Column config as array | Declarative, testable, trivially sortable and filterable |
 | `render` function | Caller controls cell rendering. Table just manages layout |
-| Sort controlled externally | So parent owns the sort state (ties to URL params) |
-| Virtualization toggle | Table does not force one approach. Opt in when needed |
-| Loading/empty/error states | Every data component needs these. Each state needs its own UI |
+| Sort controlled externally | Parent owns sort state (ties to URL params) |
+| Virtualization toggle | Opt in when needed |
+| Loading/empty/error states | Every data component needs these |
 
-## Real World Example
-
-### Modal with All Edge Cases
+## Real World: Production Modal
 
 A production Modal needs: portal rendering, focus trapping, Escape key close, overlay click close, body scroll lock, focus restoration on close, and screen reader support.
 
@@ -210,7 +205,6 @@ function Modal({
   const overlayRef = useRef(null);
   const previousActiveElement = useRef(null);
 
-  // Close on Escape
   useEffect(() => {
     if (!open || !closeOnEsc) return;
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
@@ -218,7 +212,6 @@ function Modal({
     return () => document.removeEventListener('keydown', handler);
   }, [open, closeOnEsc, onClose]);
 
-  // Save and restore focus
   useEffect(() => {
     if (!open) return;
     previousActiveElement.current = document.activeElement;
@@ -227,7 +220,6 @@ function Modal({
     return () => previousActiveElement.current?.focus();
   }, [open]);
 
-  // Lock body scroll
   useEffect(() => {
     if (!open || !preventBodyScroll) return;
     const original = document.body.style.overflow;
@@ -257,11 +249,11 @@ function Modal({
 }
 ```
 
-What happens internally: On open, the Modal saves the currently focused element so it can restore focus on close. It traps focus inside the modal by rendering a portal outside the component tree, which avoids z-index and overflow clipping issues. It locks body scroll by setting `overflow: hidden` on the body element. On unmount, it restores both scroll and focus. The overlay click handler checks `e.target === overlayRef.current` so it only closes when clicking the overlay background, not the modal content itself.
+On open, the Modal saves the currently focused element so it can restore focus on close. It traps focus inside via a portal outside the component tree. It locks body scroll by setting `overflow: hidden`. On unmount, it restores both scroll and focus.
 
 ### Toast System Architecture
 
-A Toast system is not just a component. It is a full system with a Provider, Context, Hook, Container, and individual Toast instances.
+A Toast system is not just a component. It's a full system with a Provider, Context, Hook, Container, and individual Toast instances.
 
 ```text
 App
@@ -276,7 +268,7 @@ Any component
   └── useToast().addToast('Failed', 'error', { persist: true })
 ```
 
-What happens internally: The Provider holds a queue of toast objects in state. Each toast has an id, message, type, duration, and optional action. The Container renders as a portal at a fixed position. Toasts auto-dismiss after their duration via setTimeout. Programmatic dismiss calls `dismissToast(id)`. The `maxVisible` option limits how many toasts show at once, queuing the rest.
+The Provider holds a queue of toast objects in state. The Container renders as a portal at a fixed position. Toasts auto-dismiss via setTimeout. `maxVisible` limits how many show at once.
 
 ## Tradeoffs
 
@@ -288,39 +280,149 @@ What happens internally: The Provider holds a queue of toast objects in state. E
 | Portal for overlays | Avoids z-index issues | Focus management required |
 | Slot pattern (renderX) | Full customization | More complex API |
 
-The minimum viable API principle: Do not add a prop until you have 3 use cases. Premature API surface makes components unusable.
+The minimum viable API principle: don't add a prop until you have 3 use cases.
 
 ## Common Mistakes
 
-- **Boolean props for visual variants**: Use enums (`variant: 'primary' | 'secondary' | 'ghost'`). Booleans do not scale. What happens when you need a third variant?
+- **Boolean props for visual variants**: Use enums (`variant: 'primary' | 'secondary' | 'ghost'`). Booleans don't scale.
 - **Missing forwardRef**: Parent cannot focus, measure, or integrate with form libraries.
 - **No loading state**: User clicks Save and nothing happens. Double-submit bug.
-- **No empty state**: Data component shows blank white space when there are no results.
-- **Hardcoded structure**: Table rows are not customizable because cell rendering is in the Table, not the consumer.
+- **No empty state**: Data component shows blank white space.
+- **Hardcoded structure**: Table rows aren't customizable because cell rendering is in the Table.
 - **Not using portals**: Modal or Dropdown clips inside parent with `overflow: hidden`.
-- **Missing focus management**: Modal opens, but focus stays on the trigger button. Screen reader cannot find the modal content.
+- **Missing focus management**: Modal opens but focus stays on the trigger button.
 
 ## SDE-2 Interview Answer
 
 ### Mid-level
 
-"I design the API before writing any code. I categorize props into visual (variant, size), behavioral (loading, disabled, onChange), structural (as, href, forwardRef), and accessibility (aria-label, role). I always support controlled and uncontrolled via a shared useControllableState hook. I forwardRef every interactive component. I use enums for visual variants, not booleans. For data components, I design all four states: loading, empty, error, data."
+"I design the API before writing any code. I categorize props into visual (variant, size), behavioral (loading, disabled, onChange), structural (as, href, forwardRef), and accessibility (aria-label, role). I always support controlled and uncontrolled via a shared useControllableState hook. I forwardRef every interactive component. I use enums for visual variants, not booleans."
 
 ### Senior
 
-"I design component APIs with the minimum viable surface. I add props only when there are 3 use cases. I use slot patterns (renderX) instead of configuration props for customization. I review component APIs for composition: can consumers extend this without forking the component? I ensure every overlay component uses portals, focus traps, and scroll lock. I reject PRs that add boolean variants instead of enums."
+"I design component APIs with the minimum viable surface. I add props only when there are 3 use cases. I use slot patterns (renderX) instead of configuration props for customization. I review component APIs for composition: can consumers extend this without forking the component? I ensure every overlay component uses portals, focus traps, and scroll lock."
 
 ### Engineering Lead
 
-"I define component API standards for the team. Every component must have: forwardRef, controlled/uncontrolled support, proper aria attributes, keyboard navigation, and four-state handling for data components. I enforce these in code review. I maintain a component API checklist in the team's design system docs. The checklist prevents the API drift that makes component libraries hard to use over time."
+"I define component API standards for the team. Every component must have: forwardRef, controlled/uncontrolled support, proper aria attributes, keyboard navigation, and four-state handling for data components. I enforce these in code review. I maintain a component API checklist in the team's design system docs."
 
 ## Follow-up Questions
 
-1. Design a Select component API that supports search, multi-select, async options, keyboard navigation, and custom option rendering. Where does each concern belong?
-2. How would you add virtual scrolling to the Table without changing its API? What props would you add?
-3. A Data Grid needs inline editing, column resize, column reorder, and pagination. How does the API grow without becoming unmanageable?
-4. Design a Toast system API. How does state management work? Who creates toasts? Who positions them? Who dismisses them?
-5. How do you test a Modal component? What edge cases do you verify in unit tests and integration tests?
+**Q1: Design a Select component API that supports search, multi-select, async options, keyboard navigation, and custom option rendering. Where does each concern belong?**
+Split concerns into props by category: **Visual** — `size`, `variant`, `className`. **Behavioral** — `value`/`defaultValue` + `onChange` for controlled/uncontrolled, `isMulti` boolean for multi-select mode, `isSearchable` for search, `isLoading` for async, `isDisabled`. **Content** — `options` array for sync data, `loadOptions` async function for async (TanStack Query pattern), `formatOption` render prop for custom option rendering. **Accessibility** — `inputId`, `aria-label`, `menuAriaLabel`. Keyboard navigation is internal — ArrowUp/Down moves focus, Enter selects, Escape closes, typing filters when searchable.
+
+```tsx
+type SelectProps = {
+  // Visual
+  size?: 'sm' | 'md' | 'lg';
+  variant?: 'default' | 'error';
+  className?: string;
+  // Behavioral (controlled/uncontrolled)
+  value?: Option | Option[];
+  defaultValue?: Option | Option[];
+  onChange?: (value: Option | Option[]) => void;
+  isMulti?: boolean;
+  isSearchable?: boolean;
+  isLoading?: boolean;
+  isDisabled?: boolean;
+  // Content
+  options: Option[];
+  loadOptions?: (input: string) => Promise<Option[]>;
+  formatOption?: (option: Option) => ReactNode;
+  // A11y
+  'aria-label'?: string;
+};
+```
+
+**Q2: How would you add virtual scrolling to the Table without changing its API?**
+Make virtualization an **internal optimization** controlled by a single boolean prop. When `virtualized` is true, the Table internally uses `@tanstack/react-virtual` to render only visible rows. The `rowHeight` prop (default 48) tells the virtualizer each row's height. From the consumer's perspective, the API is identical — `columns`, `data`, `rowKey`, `onRowClick` all stay the same. The Table wraps its body in a virtualized container internally.
+
+```jsx
+// Consumer API doesn't change
+<Table columns={columns} data={rows} virtualized rowHeight={48} />
+
+// Internal implementation change only
+{virtualized ? (
+  <VirtualTableBody rows={visibleRows} columns={columns} />
+) : (
+  <TableBody rows={rows} columns={columns} />
+)}
+```
+
+The key: virtualization should be a **deployment detail**, not an API contract. The consumer shouldn't need to restructure their code to enable it. If the Table uses `render` functions in column config, those work the same way — the virtualizer just renders fewer rows.
+
+**Q3: A Data Grid needs inline editing, column resize, column reorder, and pagination. How does the API grow without becoming unmanageable?**
+Group features into **opt-in modules** via a configuration object, not individual boolean props. Each module is a config block — if the block is present, the feature is enabled. This keeps the API surface small while supporting rich functionality.
+
+```tsx
+type DataGridProps = {
+  columns: Column[];
+  data: T[];
+  // Each feature is a config block, not a boolean
+  editing?: {
+    onCellEdit: (rowId: string, colId: string, value: any) => Promise<void>;
+    validator?: (value: any, column: Column) => string | null;
+  };
+  resizing?: {
+    onResize: (colId: string, width: number) => void;
+    minColumnWidth?: number;
+  };
+  reordering?: {
+    onReorder: (fromIndex: number, toIndex: number) => void;
+  };
+  pagination?: {
+    pageSize: number;
+    currentPage: number;
+    onPageChange: (page: number) => void;
+    totalItems: number;
+  };
+};
+```
+
+The rule: **no boolean props for features**. A missing `editing` block means no editing. An empty `editing: {}` means editing with defaults. This pattern scales to 10+ features without the prop count explosion that boolean flags cause.
+
+**Q4: Design a Toast system API. Who creates toasts? Who positions them? Who dismisses them?**
+The architecture has four layers: (1) **Provider** wraps the app and holds the toast queue in state. (2) **Hook** (`useToast`) is the public API — any component calls `toast.success('Saved')` or `toast.error('Failed', { duration: 5000 })`. (3) **Container** renders as a portal at a fixed position (top-right, bottom-center, etc.) and is the only component that knows positioning. (4) **Toast** is the individual notification with auto-dismiss, action buttons, and dismiss on swipe.
+
+```jsx
+// Creation: any component via hook
+const { toast } = useToast();
+toast.success('Contact saved');
+toast.error('Failed to delete', { duration: 10000, action: { label: 'Retry', onClick: retry } });
+
+// Positioning: Provider config, not consumer
+<ToastProvider position="top-right" maxVisible={3}>
+  <App />
+</ToastProvider>
+
+// Dismissal: automatic (timeout) + manual (close button or swipe)
+// Toast component handles both internally
+```
+
+The Provider owns positioning (via config). The hook owns creation (public API). The Container owns layout (renders toasts in the right order). The Toast owns its lifecycle (auto-dismiss timer, pause on hover, dismiss on interaction). No component reaches into another's domain.
+
+**Q5: How do you test a Modal component? What edge cases do you verify?**
+Test these categories: (1) **Render conditions** — renders nothing when closed, renders portal content when open. (2) **Close mechanisms** — closes on Escape key, closes on overlay click (but not on content click), closes via close button. (3) **Focus management** — focus moves to first focusable element on open, focus returns to trigger element on close, Tab cycles within the modal (focus trap). (4) **Accessibility** — `role="dialog"` and `aria-modal="true"` are present, `aria-labelledby` or `aria-label` is set. (5) **Body scroll** — body scroll is locked when open, restored on close. (6) **Nested modals** — second modal opens above first, closing second returns focus to first. (7) **Animation** — exit animation completes before unmount (test with `AnimatePresence`).
+
+```jsx
+it('closes on Escape but not on content click', async () => {
+  render(<Modal isOpen onClose={onClose}><div data-testid="content">text</div></Modal>);
+  await userEvent.keyboard('{Escape}');
+  expect(onClose).toHaveBeenCalledTimes(1);
+
+  await userEvent.click(screen.getByTestId('content'));
+  expect(onClose).toHaveBeenCalledTimes(1); // still 1, not 2
+});
+
+it('restores focus to trigger on close', async () => {
+  render(<><button>Open</button><Modal isOpen onClose={onClose}>content</Modal></>);
+  screen.getByText('Open').focus();
+  await userEvent.keyboard('{Escape}');
+  expect(screen.getByText('Open')).toHaveFocus();
+});
+```
+
+Use `@testing-library/react` with `userEvent` for realistic keyboard/mouse interactions. Test with `jest-axe` for automated accessibility checks.
 
 ## Mental Trigger
 
@@ -331,12 +433,12 @@ The minimum viable API principle: Do not add a prop until you have 3 use cases. 
 - Every prop has one owner: styling, behavior, accessibility, or layout.
 - Support controlled + uncontrolled via useControllableState hook.
 - forwardRef every interactive component for focus, measure, form integration.
-- Enums over booleans for visual variants. Boolean props do not scale.
+- Enums over booleans for visual variants. Boolean props don't scale.
 - Portal for overlay components (Modal, Dropdown, Toast).
 - Focus trap for Modal. Lock body scroll. Restore focus on close.
 - Four states for data components: loading (skeleton), empty (message + action), error (message + retry), data.
 - Column config array for Table. render function for cell customization. rowKey for reconciliation.
 - Slot pattern (renderX) for component customization.
-- Minimum viable API: do not add prop until 3 use cases exist.
+- Minimum viable API: don't add prop until 3 use cases exist.
 - cn() for class merging: clsx + tailwind-merge.
 - Design checklist: state ownership, visual variants, interaction states, content states, keyboard nav, accessibility, ref, portal, animation, composability.

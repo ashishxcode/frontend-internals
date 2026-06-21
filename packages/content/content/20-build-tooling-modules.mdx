@@ -10,13 +10,15 @@ description: "Vite, Webpack, ESM vs CJS, tree-shaking, code-splitting"
 
 ---
 
-## Problem
+## The 70KB Library You Never Asked For
 
 Your bundle is huge. The dev server is slow. You ship a full library but use one function. Your app takes seconds to load on a slow network. These are real SDE-2 questions. The job description names Vite. The whole area becomes small once you see the bundler as a graph optimizer whose job is shipping less.
 
 The browser can fetch JavaScript. But hundreds of separate module files mean hundreds of requests. This is slow, especially before HTTP/2. Browsers historically could not run Node's CJS `require`. So bundlers combine modules into a few files and transform the syntax.
 
-## Why Existing Solution Failed
+Here is the mistake that wastes kilobytes on every deploy: `import _ from "lodash"` brings in the entire 70KB library. You use one function. The bundler cannot help you because CJS does not let it know what you actually need.
+
+## Why CJS Broke the Browser
 
 Before bundlers, you loaded scripts with individual `<script>` tags. Every dependency was a separate HTTP request. This worked for small apps but collapsed as apps grew. You also had global scope pollution. One library overwrote another's globals. There was no dependency management.
 
@@ -30,13 +32,15 @@ const lib = someCondition ? require("heavy-lib") : require("light-lib");
 
 The bundler conservatively includes everything from a CJS module. You pay for code you never use.
 
-## Mental Model
+Think of CJS like a restaurant that preps every dish on the menu every morning, even though most will never be ordered. Wasteful, but safe. ESM is like ordering — the kitchen only prepares what you ask for.
+
+## The Mental Model: Graph Optimizer That Ships Less
 
 A bundler is a GRAPH OPTIMIZER. It starts at your entry file. It follows every `import` to build a dependency graph of modules. Then it emits the smallest, fastest set of files the browser can load. It has two jobs. One: RESOLVE and COMBINE modules so the browser makes few requests. Two: SHIP LESS. Drop unused code (tree-shaking). Split rarely-used code into separate chunks (code-splitting). Minify. Everything, including ESM vs CJS, Vite's dev-vs-build split, and source maps, serves the goal of "build the graph, then ship the least JavaScript possible."
 
-From "graph optimizer that ships less" you understand why ESM (static imports) enables tree-shaking. CJS (dynamic require) cannot do this. You understand why Vite is fast in dev (native ESM, no bundling) but bundles for prod (Rollup). You understand why code-splitting helps first load.
+The core insight: **ESM is static and analyzable. CJS is dynamic and opaque. That one difference determines everything about what a bundler can optimize.**
 
-ESM is the key. `import` and `export` are static. They are top-level. They are resolved before running. The bundler knows exactly which exports each module uses and drops the rest. CJS `require()` is dynamic and runtime. The tool cannot be sure what is used and tends to include everything.
+From "graph optimizer that ships less" you understand why ESM (static imports) enables tree-shaking. CJS (dynamic require) cannot do this. You understand why Vite is fast in dev (native ESM, no bundling) but bundles for prod (Rollup). You understand why code-splitting helps first load.
 
 ## Visualization
 
@@ -182,15 +186,77 @@ The organizational pattern is: measure, set standards, automate enforcement, rev
 
 ## Follow-up Questions
 
-1. Start with an entry file. Walk through what the bundler does step by step from entry to emitted files. (foundational)
+1. Start with an entry file. Walk through what the bundler does step by step from entry to emitted files.
 
-2. A teammate imports `_ from "lodash"`. Explain why it bypasses tree-shaking and how to fix it. (application)
+**Q1: Start with an entry file. Walk through what the bundler does step by step from entry to emitted files.**
 
-3. Vite's dev server is fast for small apps. Does it stay fast as the app grows to 1000 modules? Explain why or why not. (analysis)
+Starting from `main.tsx` as the entry:
 
-4. You add a charting library (200KB) but only use it on one route. How do you prevent it from blocking the initial page load? Show the code change and explain what the bundler does with it. (application plus analysis)
+1. **Parse**: The bundler reads `main.tsx` and parses it into an Abstract Syntax Tree (AST). It identifies every `import` statement.
+2. **Resolve**: For each import (e.g., `import App from "./App"`), the bundler resolves the actual file path — checking file extensions (.tsx, .ts, .js), `index` files, and `package.json` `main`/`module` fields for node_modules.
+3. **Build the dependency graph**: It recursively follows every import from every resolved module. `main.tsx` imports `App`, which imports `Button` from `./components`, which imports `styles.css`. The graph is a tree of all modules your app depends on.
+4. **Transform**: Each module is transformed — TypeScript is stripped, JSX is compiled to `React.createElement` (or the automatic runtime), CSS might be extracted. In Vite dev, esbuild handles this on-demand per file. In Vite build, Rollup does it during bundling.
+5. **Tree-shake**: The bundler marks which exports from each module are actually used. Unused exports are eliminated. If `lodash-es` exports 300 functions but you import `debounce`, only `debounce` and its transitive dependencies survive.
+6. **Code-split**: If the bundler finds dynamic `import()` expressions (e.g., `import("./Dashboard")`), it splits those into separate chunks. The initial bundle loads first; lazy chunks load on demand.
+7. **Bundle**: All remaining modules are combined into one or a few output files. References between modules are resolved — `require()` calls are replaced with inlined module code or a module registry.
+8. **Minify**: Variable names are shortened, whitespace is removed, dead code is eliminated. The output shrinks significantly.
+9. **Emit**: The final files are written to the output directory (e.g., `dist/`) with content hashes in filenames for cache busting.
 
-5. A library you depend on has `"sideEffects": true` in its package.json. You know it has no side effects. What happens to tree-shaking? How do you override this? What could go wrong? (synthesis)
+2. A teammate imports `_ from "lodash"`. Explain why it bypasses tree-shaking and how to fix it.
+
+**Q2: A teammate imports `_ from "lodash"`. Explain why it bypasses tree-shaking and how to fix it.**
+
+`lodash` ships CommonJS (CJS) by default. When you `import _ from "lodash"`, the bundler sees a default import of the entire CJS module. CJS modules are opaque to the bundler — `module.exports` is a dynamic object, and properties can be accessed dynamically (`_[someKey]`). The bundler cannot statically determine which properties of `_` are actually used, so it must conservatively include the entire 70KB library. Tree-shaking requires static import/export relationships — the bundler needs to know exactly which named exports are referenced. CJS provides no such structure. The fix: switch to `lodash-es`, the ESM build of lodash. Change the import to a named import:
+
+```js
+import { debounce } from "lodash-es";
+```
+
+Now the bundler sees a named ESM import. It can statically trace that only `debounce` is used, follow its dependencies, and eliminate everything else. The bundle shrinks from ~70KB to ~4KB. The package.json can also add `"sideEffects": false` to further assist the bundler. If you must use the CJS `lodash` package, you can use babel-plugin-lodash or webpack's `ContextReplacementPlugin` to cherry-pick, but `lodash-es` with named imports is the standard solution.
+
+3. Vite's dev server is fast for small apps. Does it stay fast as the app grows to 1000 modules? Explain why or why not.
+
+**Q3: Vite's dev server is fast for small apps. Does it stay fast as the app grows to 1000 modules? Explain why or why not.**
+
+Vite's dev server uses **native ESM** — the browser imports modules directly via `<script type="module">` without bundling. esbuild transpiles individual files on-demand (TypeScript, JSX) when the browser requests them. For small apps (under ~500 modules), this is near-instant: the server starts immediately, and each file is transpiled in milliseconds. At 1000+ modules, two bottlenecks emerge. First, **HTTP request waterfall**: each module is a separate HTTP request. Even with HTTP/2 multiplexing, the browser must discover, request, and resolve each module. The initial page load might need 100+ module requests before anything renders. Second, **dependency pre-bundling**: Vite pre-bundles node_modules dependencies with esbuild on first startup. A large `node_modules` with hundreds of packages can take seconds to pre-bundle. Subsequent startups use a cache, but the initial cold start slows. Vite mitigates this with `optimizeDeps` (pre-bundling) and dep caching, but the fundamental constraint remains: unbundled ESM means many HTTP requests. For very large apps (1000+ modules), the initial load has a noticeable delay compared to a bundled approach. Production builds (Rollup) don't have this issue because everything is bundled into a few files. In practice, Vite stays fast enough for most apps up to ~1000 modules, but beyond that you'll notice cold start degradation. The HMR (Hot Module Replacement) stays fast regardless because it only re-transpiles the changed file.
+
+4. You add a charting library (200KB) but only use it on one route. How do you prevent it from blocking the initial page load? Show the code change and explain what the bundler does with it.
+
+**Q4: You add a charting library (200KB) but only use it on one route. How do you prevent it from blocking the initial page load?**
+
+Use **route-level code-splitting** with dynamic `import()`:
+
+```tsx
+// Before: static import — chart lib is in the initial bundle
+import Chart from "./Chart";
+
+// After: dynamic import — chart lib is in a separate chunk
+const Chart = React.lazy(() => import("./Chart"));
+
+function Dashboard() {
+  return (
+    <Suspense fallback={<div>Loading chart...</div>}>
+      <Chart data={data} />
+    </Suspense>
+  );
+}
+```
+
+What the bundler does: Rollup (in Vite's build) sees the `import("./Chart")` and creates a **separate chunk** — a different JavaScript file containing `Chart` and all its dependencies (the 200KB library). The initial bundle no longer includes the chart code. When the user navigates to the dashboard route, the browser fetches the chart chunk on demand. The `React.lazy` wrapper handles the loading state via `Suspense`. The result: initial page load drops by ~200KB. The chart chunk is only downloaded when the user actually needs it. You can verify this with Vite's build output — the chart chunk will have its own content hash filename. For route-level splitting, many frameworks (Next.js, React Router) support this pattern directly. The key principle: if a large dependency is only used on one route, it should not be in the initial bundle.
+
+5. A library you depend on has `"sideEffects": true` in its package.json. You know it has no side effects. What happens to tree-shaking? How do you override this? What could go wrong?
+
+**Q5: A library you depend on has `"sideEffects": true` in its package.json. What happens to tree-shaking? How do you override this? What could go wrong?**
+
+When a library declares `"sideEffects": true`, the bundler treats **every module** in that package as potentially side-effectful. Even if you import only one named export, the bundler must include every module that gets pulled into the dependency graph — because any of them might run code on import (like modifying a global, registering a polyfill, or patching a prototype). Tree-shaking is effectively disabled for that package. You get the entire library in your bundle regardless of what you import. To override this, you can set `"sideEffects": false` in **your** project's `package.json` for that specific package using a glob:
+
+```json
+{
+  "sideEffects": ["./src/polyfills.js", "lodash/*.js"]
+}
+```
+
+Or use `/*#__PURE__*/` comments in the library's source to mark specific imports as pure. What could go wrong: if the library actually **does** have side effects (e.g., a CSS-in-JS library that injects styles on import, a polyfill that patches `Array.prototype`, or a library that calls `fetch` on import), marking it as side-effect-free tells the bundler to drop it. The code will be eliminated, and runtime behavior breaks — missing styles, missing polyfills, or silent failures. Always verify by testing the library in production mode. A safer approach: list only the side-effectful files in the `"sideEffects"` array rather than blanket-setting `false`. This preserves tree-shaking for pure modules while keeping the side-effectful ones.
 
 ## Mental Trigger
 

@@ -5,11 +5,13 @@ part: "Rendering & Build"
 description: "CSR, SSR, SSG, ISR, RSC, hydration"
 ---
 
-## Problem
+## The Blank Screen Problem
 
 Your app takes too long to show content. The user sees a blank white screen. The JavaScript bundle must download, parse, and execute before anything appears. This hurts first impressions and SEO. Search engines see an empty page. You try server-side rendering. The first paint is fast now, but the page is not interactive. Users click buttons and nothing happens. The page feels broken. Each fix introduces a new problem.
 
-## Why Existing Solution Failed
+Here is what nobody tells you upfront: there is no single "best" rendering strategy. Every approach is a tradeoff. The real skill is knowing which tradeoff fits which page.
+
+## Why One Strategy Never Fits All
 
 The single-page application model, CSR, sent a nearly empty HTML file with a JavaScript bundle. The browser had to download, parse, compile, and execute the entire JS bundle before rendering anything useful. This could take seconds on slow networks or devices. SEO suffered because crawlers did not execute JavaScript reliably.
 
@@ -19,9 +21,13 @@ SSG fixed both problems for static content but broke for dynamic or personalized
 
 The real problem was not the strategy itself. It was picking one strategy for the whole app. Different pages have different needs. Different parts of a page have different interactivity needs.
 
-## Mental Model
+Think of it like a restaurant. A food truck optimizes for speed. A fine dining restaurant optimizes for experience. A buffet optimizes for variety. Trying to run all three models from one kitchen is chaos.
+
+## The Mental Model: Where and When Is the HTML Built?
 
 The only question is: WHERE and WHEN does the HTML get built? There are four places and times. In the browser at runtime (CSR). On the server per request (SSR). At build time (SSG). Or a hybrid that rebuilds stale pages (ISR). Plus RSC, which splits a component tree into server-rendered and client-interactive parts. Each choice trades off time to content, server cost, freshness, and interactivity. Pick by asking: how fresh must this be, how fast must first paint be, and how interactive is it.
+
+The core insight: **rendering strategy is a per-page decision, not an app-wide decision.**
 
 ## Visualization
 
@@ -171,14 +177,46 @@ Hydration cost: after SSR, SSG, or ISR deliver HTML, React must still hydrate on
 ## Follow-up Questions
 
 1. Place CSR, SSR, SSG, and ISR on first-paint, freshness, and server-cost axes. Give a realistic use case for each.
+
+**Q1: Place CSR, SSR, SSG, and ISR on first-paint, freshness, and server-cost axes. Give a realistic use case for each.**
+
+**CSR (Client-Side Rendering):** First paint is slow (blank screen until the JS bundle downloads, parses, and executes — could be 1–5 seconds on 3G). Freshness is always current since HTML is built at runtime. Server cost is minimal — the server just serves static files. Use case: an **authenticated dashboard** where SEO doesn't matter, the user is already logged in, and you need real-time data that changes frequently.
+
+**SSR (Server-Side Rendering):** First paint is fast (server builds HTML per request, user sees content immediately). Freshness is per-request — every load gets fresh data. Server cost is high — every request triggers a Node.js render cycle with data fetching. Use case: a **user profile page** behind auth that shows personalized data on every visit and needs fast initial paint.
+
+**SSG (Static Site Generation):** First paint is fastest — HTML is prebuilt at build time and served from a CDN edge node with no server computation. Freshness is stale until the next build and deploy. Server cost is near-zero after the build. Use case: **marketing landing pages** and **documentation** that change infrequently and need maximum performance and SEO.
+
+**ISR (Incremental Static Regeneration):** First paint is fastest (same as SSG — prebuilt HTML from CDN). Freshness is near-real-time — pages revalidate in the background after a configured `revalidate` interval (e.g., 60 seconds). Server cost is low — a serverless function runs only to rebuild stale pages. Use case: an **e-commerce product page** where the base content is static but prices and stock update occasionally — ISR gives CDN speed with freshness without a full rebuild.
+
 2. Walk the CSR vs SSR load timeline. When does the user first see content? When does the user first interact?
+
+**Q2: Walk the CSR vs SSR load timeline. When does the user first see content? When does the user first interact?**
+
+**CSR timeline:** The browser requests the page. The server returns an empty HTML shell (`<div id="root"></div>`) with a `<script>` tag. The browser downloads the JavaScript bundle (could be 100KB–1MB+ gzipped). It parses, compiles, and executes the JS. React runs `createRoot().render()`, builds the component tree, and commits DOM nodes. Only now does the user see content. First content paint = JS download + parse + compile + React render time (often 2–5 seconds on slow networks). First interaction happens immediately after — the JS is already loaded, so event handlers are attached as part of the render.
+
+**SSR timeline:** The browser requests the page. The server runs `ReactDOMServer.renderToString(<App />)` — it walks the component tree, calls each component, and produces a full HTML string. The server sends the complete HTML. The browser receives it and paints immediately — the user sees content. First content paint = network round-trip + server render time (typically 100–500ms). But the page is **not interactive** yet. The browser must still download the JS bundle and run `hydrateRoot()`, which walks the existing DOM, attaches event listeners, and builds the fiber tree. First interaction = first content paint + JS download + hydration time. There is a visible-but-unresponsive gap. This gap is what hurts INP (Interaction to Next Paint) — the user sees buttons but clicking them does nothing until hydration completes.
+
 3. What is hydration? How does it relate to INP? What happens if the server HTML and client render do not match?
+
+**Q3: What is hydration? How does it relate to INP? What happens if the server HTML and client render do not match?**
+
+Hydration is the process where React attaches event listeners and builds its internal fiber tree on top of server-rendered HTML. The server sends pre-built HTML (visible content). The client then downloads the JS bundle and calls `hydrateRoot()` instead of `createRoot()`. React renders the component tree on the client, produces a virtual DOM, and walks the existing real DOM — matching each virtual node to an existing DOM node. It does **not** create new nodes. It attaches onClick handlers, builds refs, and initializes state. The page becomes interactive after hydration finishes. Hydration relates to INP because during hydration, the main thread is blocked executing JS. Click events that arrive before hydration completes are queued — the user clicks a button and nothing happens. Once hydration finishes, the queued events replay. If hydration takes 2–3 seconds (heavy component tree, large JS bundle), INP suffers badly. If server HTML and client render **do not match** (e.g., a `Date.now()` in render produces different output), React detects the mismatch during the hydration diff. It discards the entire server HTML and re-renders the full tree from scratch using `createRoot` semantics. This is extremely expensive — you lose all the benefit of SSR and the page essentially remounts.
+
 4. What does RSC change about the JavaScript bundle? What still ships JS and what does not? What is the RSC payload?
+
+**Q4: What does RSC change about the JavaScript bundle? What still ships JS and what does not? What is the RSC payload?**
+
+React Server Components (RSC) split the component tree into two categories. **Server components** (the default in Next.js App Router) run entirely on the server. They return a serialized representation called the **RSC payload**, not HTML. Their JavaScript **never ships to the client** — no bundle cost, no hydration cost. You can import large libraries (markdown parsers, syntax highlighters, date formatters) in server components without affecting bundle size. **Client components** (marked with `"use client"`) run on both server and client. Their JavaScript **does ship to the browser** and they hydrate normally. The RSC payload is a streaming JSON-like format — a sequence of chunks describing the component tree's structure, including server component output (as serialized nodes) and references to client component bundles. The browser receives the RSC payload, renders server component output as static content (no JS needed), and hydrates only the client components. The net effect: the JS bundle contains only client component code. Server component code is eliminated entirely. This reduces bundle size, improves LCP, and lowers hydration cost.
+
 5. How does client-side routing change the URL without a page reload? (tie to History API, pushState, popstate)
+
+**Q5: How does client-side routing change the URL without a page reload?**
+
+Client-side routers use the browser's **History API** to manipulate the URL. When you navigate to `/dashboard`, the router calls `history.pushState(stateObj, "", "/dashboard")`. This updates the address bar, pushes a new entry onto the browser's history stack, and fires a `popstate` event when the user navigates back — but it does **not** cause a page reload or network request. The router then reads the current URL via `window.location.pathname`, matches it against a route table, and renders the corresponding React component. When the user clicks the back button, the browser fires a `popstate` event with the state object passed to the original `pushState` call. The router listens for this event and re-renders the component for the previous URL. `replaceState` is used for redirects and query parameter updates where you don't want to add a history entry. The key insight is that `pushState`/`replaceState` only manipulate the URL and history stack — the browser does nothing else. The router is entirely responsible for reading the URL and rendering the right view. This is why SPA deep links need a server fallback: if the user navigates directly to `/dashboard/123`, the server must return the SPA shell (index.html) so the client router can take over and render the correct page.
 
 ## Mental Trigger
 
-Where and when is the HTML built? That decides everything.
+**Where and when is the HTML built? That decides everything.**
 
 ## One Page Revision
 

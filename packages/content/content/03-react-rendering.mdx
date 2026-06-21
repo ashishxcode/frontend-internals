@@ -7,7 +7,7 @@ description: "setState → Update Queue → Scheduler pipeline"
 
 ## Problem
 
-A developer writes a click handler that updates two pieces of state:
+You write a click handler that updates two pieces of state:
 
 ```js
 function handleClick() {
@@ -16,9 +16,9 @@ function handleClick() {
 }
 ```
 
-They expect count to be 1 and theme to be "dark" on the next line. It is not. The count variable in scope is still 0. The theme variable in scope is still the old value. Confusion sets in.
+You expect `count` to be `1` and `theme` to be `"dark"` on the next line. It's not. The `count` variable in scope is still `0`. The `theme` variable is still the old value. Confusion sets in.
 
-A deeper problem: if each setter did mutate the variable synchronously and re-render the component immediately, three setters would produce three separate renders. Intermediate half-applied UIs. Wasted work. Layout thrashing. The DOM would be recalculated mid-handler, before the handler even finished.
+Here's the deeper problem: if each setter *did* mutate the variable synchronously and re-render the component immediately, three setters would produce three separate renders. Intermediate half-applied UIs. Wasted work. Layout thrashing. The DOM would be recalculated mid-handler, before the handler even finished.
 
 ```js
 function handleClick() {
@@ -28,9 +28,11 @@ function handleClick() {
 }
 ```
 
-Three setter calls. Three full re-renders of the entire subtree. The user sees a flash of loading state that is immediately replaced by data. The browser recalculates layout after each DOM write. The handler has not even returned yet, but the DOM was mutated three times.
+Three setter calls. Three full re-renders of the entire subtree. The user sees a flash of loading state that gets immediately replaced by data. The browser recalculates layout after each DOM write. The handler hasn't even returned yet, but the DOM was mutated three times.
 
-The engineering challenge React had to solve: **How do you let developers write natural sequential state changes while only producing a single coherent DOM update?** The answer is not about making setState async. It is about decoupling the call to setState from the act of rendering.
+The engineering challenge React had to solve: **How do you let developers write natural sequential state changes while only producing a single coherent DOM update?** The answer isn't about making `setState` async. It's about decoupling the *call* to `setState` from the *act of rendering*.
+
+Think of it like a restaurant. You don't want the waiter running to the kitchen after every single item you order. You want to say "I'll have the soup, the salad, and the steak," and *then* the waiter goes to the kitchen once. That's what `setState` does — it writes down your requests, and when you're done talking, it sends one order to the kitchen.
 
 ---
 
@@ -45,9 +47,11 @@ $("#data").text(response);
 $("#error").hide();
 ```
 
-Each line reaches into the DOM and changes it. The browser has no idea more changes are coming. After each DOM write, it may recalculate layout. Three writes can trigger three layout passes. The developer must manually batch by building a DocumentFragment, concatenating HTML strings, or using requestAnimationFrame to coalesce.
+Each line reaches into the DOM and changes it. The browser has no idea more changes are coming. After each DOM write, it may recalculate layout. Three writes can trigger three layout passes. The developer must manually batch by building a `DocumentFragment`, concatenating HTML strings, or using `requestAnimationFrame` to coalesce.
 
-Backbone and early frameworks had the same limitation. Changing a model attribute fires a "change" event. The view re-renders. Change three attributes:
+It's like being at a restaurant where the waiter runs to the kitchen after *every single item*. "Soup!" runs to the kitchen. "Salad!" runs back. "Steak!" runs back again. Three trips. Three times the work. And the food arrives cold because the kitchen started making the soup before you finished ordering.
+
+Backbone and early frameworks had the same limitation. Changing a model attribute fires a `"change"` event. The view re-renders. Change three attributes:
 
 ```js
 model.set("loading", true);  // triggers view re-render
@@ -59,19 +63,23 @@ Either you get three re-renders, or you use silent flags and batch manually. The
 
 The core limitation: **State mutation and DOM update were tightly coupled.** Every setter either did synchronous DOM work or required manual batching from the developer. There was no declarative "this is what I want the state to be, you figure out when to update the screen."
 
-React's solution was radical: decouple the set call from the render. Make setState an enqueue operation. The framework collects all changes, then produces one render. The developer just describes the desired end state.
+React's solution was radical: decouple the set call from the render. Make `setState` an *enqueue* operation. The framework collects all changes, then produces one render. The developer just describes the desired end state.
 
 ---
 
 ## Mental Model
 
-**setState does not change a variable. It files a request: "next time you render this component, use this value." Rendering is a pure function `UI = f(state)` that React calls when it decides to, not when you call the setter. Every value in a render is frozen as a snapshot captured by closure. A re-render creates a new closure with new values.**
+**`setState` does not change a variable. It files a request: "next time you render this component, use this value." Rendering is a pure function `UI = f(state)` that React calls when *it* decides to, not when *you* call the setter. Every value in a render is a frozen snapshot captured by closure. A re-render creates a new closure with new values.**
 
-One memorable sentence: **"The setter is a memo to the next render."**
+Here's the one insight that makes everything else click:
 
-Everything below (batching, stale state, functional updaters, the double increment puzzle) comes from this one sentence. You do not memorize rules. You derive them from "setter = request, render = snapshot."
+**`setState` is like a sticky note on a whiteboard. You write "count = 5" on the note and stick it there. Nothing changes yet. You write "theme = dark" on another note. Nothing changes yet. When React walks by, it reads all the sticky notes at once, updates the whiteboard in one pass, and takes a photo. That photo is your render.**
 
-This model requires two prerequisites from earlier chapters: closures (Ch 01) explain why count in a render is a frozen constant. The event loop and microtask queuing (Ch 02) explain why React defers work until the stack empties. React's batching reuses the same pattern: queue work, drain when the stack empties.
+The setter is a memo to the next render.
+
+Everything below — batching, stale state, functional updaters, the double increment puzzle — comes from this one idea. You don't memorize rules. You derive them from "setter = request, render = snapshot."
+
+This model requires two prerequisites from earlier chapters: closures (Ch 01) explain why `count` in a render is a frozen constant. The event loop and microtask queuing (Ch 02) explain why React defers work until the stack empties. React's batching reuses the same pattern: queue work, drain when the stack empties.
 
 ---
 
@@ -126,7 +134,7 @@ sequenceDiagram
 
 ## Engine Simulation
 
-The double increment puzzle. Every React developer hits this:
+The double increment puzzle. Every React developer hits this at some point:
 
 ```js
 function Counter() {
@@ -139,9 +147,9 @@ function Counter() {
 }
 ```
 
-You click. What is count displayed? **1, not 2.** Walk through what the engine does.
+You click. What is count displayed? **1, not 2.** Let's walk through what the engine actually does.
 
-During this render, count is a closure-captured constant = 0. This is the snapshot for render #1. The variable count is frozen at 0 for the entire handler execution.
+During this render, `count` is a closure-captured constant = `0`. This is the snapshot for render #1. The variable `count` is frozen at `0` for the entire handler execution. It's like the value was written in permanent ink for this particular render.
 
 ```
 Step 1: setCount(count + 1)
@@ -159,9 +167,9 @@ Step 4: Scheduler runs ONE render pass.
 Step 5: React applies queue: 0 -> 1 -> 1 => final value is 1
 ```
 
-Count never became 1 mid-handler. It was frozen. Both setters read the same snapshot 0. Internally, React stores the update queue on the component's Fiber node. Each call to setState appends an update object `{ action: 1 }`. When the render runs, React starts with the base state (0) and applies each update in order: 0 -> 1 -> 1. The second update does nothing because it already sees 1 and sets to 1 again.
+Count never became `1` mid-handler. It was frozen. Both setters read the same snapshot `0`. Internally, React stores the update queue on the component's Fiber node. Each call to `setState` appends an update object `{ action: 1 }`. When the render runs, React starts with the base state (`0`) and applies each update in order: `0 -> 1 -> 1`. The second update does nothing because it already sees `1` and sets to `1` again.
 
-The fix is to stop reading the snapshot and instead describe a transformation:
+The fix is to stop reading the snapshot and instead describe a *transformation*:
 
 ```js
 setCount(c => c + 1);   // "whatever it currently is, add 1"
@@ -175,13 +183,13 @@ Update queue: [ (c) => c + 1, (c) => c + 1 ]
 Apply:        0 -> (0+1)=1 -> (1+1)=2  => final value is 2
 ```
 
-The functional updater is not a trick. It exists because the plain value form reads the frozen snapshot. The functional form says "I do not know the current value. Feed it to me when you drain the queue." This is the same mechanism useReducer uses internally.
+The functional updater isn't a trick. It exists because the plain value form reads the frozen snapshot. The functional form says "I don't know the current value — feed it to me when you drain the queue." This is the same mechanism `useReducer` uses internally.
 
 ---
 
 ## Internal Implementation
 
-Each component instance has a Fiber node (detailed in Ch 04). The Fiber stores a linked list of pending state updates. Every call to setState goes through this path:
+Each component instance has a Fiber node (detailed in Ch 04). The Fiber stores a linked list of pending state updates. Every call to `setState` goes through this path:
 
 ```
 setState(action) -> dispatchSetState(fiber, queue, action)
@@ -230,11 +238,11 @@ function ensureRootIsScheduled(root) {
 }
 ```
 
-The microtask flush is the mechanism behind automatic batching (React 18+). All setState calls during the same synchronous task create update objects and call scheduleUpdateOnFiber. Each call tries to schedule a microtask. The microtask library deduplicates: only one microtask is scheduled per root per event. When the current task finishes and the stack empties (Ch 02), the microtask runs. It calls flushSyncCallbacks, which starts the render phase.
+The microtask flush is the mechanism behind automatic batching (React 18+). All `setState` calls during the same synchronous task create update objects and call `scheduleUpdateOnFiber`. Each call tries to schedule a microtask. The microtask library deduplicates: only one microtask is scheduled per root per event. When the current task finishes and the stack empties (Ch 02), the microtask runs. It calls `flushSyncCallbacks`, which starts the render phase.
 
 **Pre-18 vs 18 batching:**
 
-Pre-18, React used a flag called BatchedContext. Inside synthetic event handlers, React set this flag. setState during a batched context just queued updates without flushing. Outside the batched context (setTimeout, Promises), the flag was not set, so each setState flushed immediately. React 18 removed the flag-based approach. The microtask flush means all updates from the same task naturally batch, regardless of origin.
+Pre-18, React used a flag called `BatchedContext`. Inside synthetic event handlers, React set this flag. `setState` during a batched context just queued updates without flushing. Outside the batched context (setTimeout, Promises), the flag was not set, so each `setState` flushed immediately. React 18 removed the flag-based approach. The microtask flush means all updates from the same task naturally batch, regardless of origin.
 
 ```js
 // Pre-18 (conceptual)
@@ -267,7 +275,7 @@ function beginWork(current, workInProgress, renderLanes) {
 }
 ```
 
-Commit phase: React walks the finished work and applies DOM mutations synchronously. Layout effects (useLayoutEffect) fire. The browser paints. Passive effects (useEffect) fire after paint.
+Commit phase: React walks the finished work and applies DOM mutations synchronously. Layout effects (`useLayoutEffect`) fire. The browser paints. Passive effects (`useEffect`) fire after paint.
 
 ```js
 // Pseudo: commit phase
@@ -282,11 +290,11 @@ function commitRoot(root) {
 }
 ```
 
-**Transitions and useDeferredValue:**
+**Transitions and `useDeferredValue`:**
 
-startTransition marks its updates with a transition lane (lower priority). An urgent update (a keystroke = SyncLane) can preempt an in-progress transition render. This is how typing stays responsive while a big list re-render runs in the background. Internally, requestUpdateLane checks for an active transition context (`ReactSharedInternals.T` in v19, was `ReactCurrentBatchConfig.transition` in v18) and assigns a transition lane.
+`startTransition` marks its updates with a transition lane (lower priority). An urgent update (a keystroke = SyncLane) can preempt an in-progress transition render. This is how typing stays responsive while a big list re-render runs in the background. Internally, `requestUpdateLane` checks for an active transition context (`ReactSharedInternals.T` in v19, was `ReactCurrentBatchConfig.transition` in v18) and assigns a transition lane.
 
-useDeferredValue renders the urgent update with the old value, then schedules an interruptible background re-render with the new value (a DeferredLane in v19, a transition lane in v18).
+`useDeferredValue` renders the urgent update with the old value, then schedules an interruptible background re-render with the new value (a DeferredLane in v19, a transition lane in v18).
 
 **StrictMode double-invoke (dev only):**
 
@@ -309,15 +317,15 @@ function onSearchInput(value) {
 }
 ```
 
-With jQuery or Backbone, each line would trigger a separate DOM update. The loading spinner flashes briefly before data loads. The selection clears visibly. The page number jumps. The user sees a flickering sequence of intermediate states.
+With jQuery or Backbone, each line would trigger a separate DOM update. The loading spinner flashes briefly before data loads. The selection clears visibly. The page number jumps. The user sees a flickering sequence of intermediate states — like a waiter who brings you soup, then runs back for salad, then runs back for steak.
 
-With React's model, all four setter calls enqueue updates on their respective Fiber nodes. The handler returns. The microtask fires. React runs one render pass. The component function reads the latest state (searchQuery updated, page=1, loading=true, selected=[]) and produces one set of React elements. Reconciliation computes the minimal DOM diff. The DOM is patched once. The user sees a single coherent transition.
+With React's model, all four setter calls enqueue updates on their respective Fiber nodes. The handler returns. The microtask fires. React runs one render pass. The component function reads the latest state (`searchQuery` updated, `page=1`, `loading=true`, `selected=[]`) and produces one set of React elements. Reconciliation computes the minimal DOM diff. The DOM is patched once. The user sees a single coherent transition.
 
 This pattern repeats across every SaaS application:
 
 - A dashboard with multiple filter widgets that all drive one data table. Each filter change resets pagination, updates the query, shows loading. All batch into one render.
 - A form with real-time validation. Each keystroke updates field value, clears field error, updates character count, toggles submit button. One render.
-- A file uploader that tracks progress percentage, upload status, error state, and preview URL. Multiple setState calls from one upload event. One render.
+- A file uploader that tracks progress percentage, upload status, error state, and preview URL. Multiple `setState` calls from one upload event. One render.
 
 The developer writes natural sequential code. React handles the coalescing.
 
@@ -330,12 +338,12 @@ The developer writes natural sequential code. React handles the coalescing.
 - Automatic batching: multiple state changes from one action produce one render. No manual debouncing or batch wrappers needed.
 - Interruptible rendering: because render is decoupled from commit, React can pause work to handle higher priority updates (Ch 04).
 - Declarative model: developer describes end state, not DOM operations. Less surface for mutation bugs.
-- Early bailout: setState with the same primitive value skips the render for that component. Reconciliation with no diff skips DOM commit.
+- Early bailout: `setState` with the same primitive value skips the render for that component. Reconciliation with no diff skips DOM commit.
 
 **Disadvantages:**
 - Stale closure problem: a callback that reads state from an old render sees the old value (Ch 01). Requires functional updaters or refs to escape.
 - Learning curve: new developers expect state to update like a variable assignment. The snapshot model is not intuitive from the surface API.
-- Memory overhead: each update is a small object allocated on the heap. Heavy queuing under rapid setState calls adds allocation pressure.
+- Memory overhead: each update is a small object allocated on the heap. Heavy queuing under rapid `setState` calls adds allocation pressure.
 - Framework complexity: the two-phase architecture (render suspendable, commit not) adds internal complexity. Bugs like "state update in effect causes double render" are harder to trace.
 - Batching can mask intent: if code accidentally relied on intermediate renders for correctness, automatic batching breaks the assumption. This is the developer's bug, but it can be subtle.
 
@@ -347,7 +355,7 @@ The developer writes natural sequential code. React handles the coalescing.
 
 **Developer experience:**
 - Functional updaters are elegant once understood but confusing for beginners who expect `x = x + 1` semantics.
-- Rules of hooks add mental overhead. useState must be called at top level, not conditionally.
+- Rules of hooks add mental overhead. `useState` must be called at top level, not conditionally.
 - Debugging stale closures requires understanding closure mechanics (Ch 01), which many React tutorials skip.
 - React DevTools show component state but not the pending update queue.
 
@@ -355,21 +363,21 @@ The developer writes natural sequential code. React handles the coalescing.
 
 ## Common Mistakes
 
-1. **Reading state right after setting it expecting the new value.** It is the old snapshot. The new value is in the queue, not in the current render's variable.
+1. **Reading state right after setting it expecting the new value.** It's the old snapshot. The new value is in the queue, not in the current render's variable.
 
 2. **Chaining value setters that depend on each other without functional form.** `setCount(count + 1); setCount(count + 1)` only adds 1. Fix: `setCount(c => c + 1)` so each updater receives the running result.
 
-3. **Putting side effects in render.** Render is pure. React may call your component twice in development (StrictMode) or abandon the render output (interruption). Side effects belong in useEffect and event handlers.
+3. **Putting side effects in render.** Render is pure. React may call your component twice in development (StrictMode) or abandon the render output (interruption). Side effects belong in `useEffect` and event handlers.
 
 4. **Assuming re-render equals slow.** Re-render is a function call. The expensive part is DOM commit and browser layout. Measure before memoizing (Ch 08).
 
-5. **Thinking setState in timeouts is broken in React 18.** It became batched, which is correct behavior. Same mental model, wider net.
+5. **Thinking `setState` in timeouts is broken in React 18.** It became batched, which is correct behavior. Same mental model, wider net.
 
-6. **Using setState for values that do not affect the UI.** If the value is not rendered, use a ref. Every setState schedules a render even if nothing visually changes.
+6. **Using `setState` for values that don't affect the UI.** If the value is not rendered, use a ref. Every `setState` schedules a render even if nothing visually changes.
 
-7. **Mutating state directly instead of calling setState.** `state.count = 2` does not schedule a render. React has no way to detect the mutation. The UI stays stale.
+7. **Mutating state directly instead of calling `setState`.** `state.count = 2` does not schedule a render. React has no way to detect the mutation. The UI stays stale.
 
-8. **Assuming setting the same value does nothing.** For primitives, React bails out via Object.is comparison. For objects, a new reference always triggers a render even if the contents are identical. This is why spreading state without changes causes unnecessary re-renders.
+8. **Assuming setting the same value does nothing.** For primitives, React bails out via `Object.is` comparison. For objects, a new reference always triggers a render even if the contents are identical. This is why spreading state without changes causes unnecessary re-renders.
 
 ---
 
@@ -379,15 +387,15 @@ Explain your reasoning step by step. Show you understand the mechanism, not just
 
 **Mid-level variant:**
 
-"When I call setState, the value does not update synchronously. React appends the update to an internal queue on the component and schedules a re-render. The current render's variable is a frozen snapshot captured by closure. It only changes when React calls the component again for the next render. If I need to chain updates, I use the functional updater form `setCount(c => c + 1)` so each updater receives the latest value from the queue as it drains."
+"When I call `setState`, the value doesn't update synchronously. React appends the update to an internal queue on the component and schedules a re-render. The current render's variable is a frozen snapshot captured by closure — it only changes when React calls the component again for the next render. If I need to chain updates, I use the functional updater form `setCount(c => c + 1)` so each updater receives the latest value from the queue as it drains."
 
 **Senior variant:**
 
-"setState is an enqueue operation, not a mutation. Each render is a snapshot created by a closure over the component's local variables. React collects all updates from the current synchronous task, then processes them in a single render pass. This automatic batching is why you can call setState multiple times in one handler and get only one render. The mechanism is a microtask-based flush that runs after the call stack empties. This model also explains stale state in callbacks: the callback closed over the old snapshot. I use functional updaters when the new state depends on the old, and refs when I need to read the latest state outside a render cycle."
+"`setState` is an enqueue operation, not a mutation. Each render is a snapshot created by a closure over the component's local variables. React collects all updates from the current synchronous task, then processes them in a single render pass. This automatic batching is why you can call `setState` multiple times in one handler and get only one render. The mechanism is a microtask-based flush that runs after the call stack empties. This model also explains stale state in callbacks: the callback closed over the old snapshot. I use functional updaters when the new state depends on the old, and refs when I need to read the latest state outside a render cycle."
 
 **Engineering Lead variant:**
 
-"The architecture deliberately decouples state intentions from render execution. This design is not accidental. It enables batching, priority-based preemption (transitions vs urgent updates), and interruptible rendering via Fiber. From a team perspective, this model forces developers to treat renders as pure functions, which eliminates an entire class of bugs from mid-update tearing. The main tradeoff is closure staleness, which requires discipline around functional updaters and refs. In code reviews, I catch patterns where state is read in async callbacks without a ref or functional updater. For complex state with multiple interdependent fields, I prefer useReducer over multiple useState calls because it centralizes the update logic into testable pure reducers. The mental model is the same either way: the setter queues, the render snapshots."
+"The architecture deliberately decouples state intentions from render execution. This design isn't accidental — it enables batching, priority-based preemption (transitions vs urgent updates), and interruptible rendering via Fiber. From a team perspective, this model forces developers to treat renders as pure functions, which eliminates an entire class of bugs from mid-update tearing. The main tradeoff is closure staleness, which requires discipline around functional updaters and refs. In code reviews, I catch patterns where state is read in async callbacks without a ref or functional updater. For complex state with multiple interdependent fields, I prefer `useReducer` over multiple `useState` calls because it centralizes the update logic into testable pure reducers. The mental model is the same either way: the setter queues, the render snapshots."
 
 ---
 
@@ -395,23 +403,31 @@ Explain your reasoning step by step. Show you understand the mechanism, not just
 
 **Q1. What happens internally when you call setState with the same value as the current state?**
 
-React compares the new value with the current state using Object.is. For primitives (numbers, strings), if the values are the same, React bails out. It does not re-render the component. For objects and arrays, a new reference always fails the Object.is check (since `{} !== {}`), so React does re-render even if the contents are identical. This is why spreading state without changing it causes a wasted render.
+React compares the new value with the current state using `Object.is`. For primitives (numbers, strings, booleans, null, undefined), `Object.is(1, 1)` is true, so React bails out — it does not enqueue an update, does not schedule a re-render, and does not touch the Fiber's update queue. This is the eager-state bailout: React computes the next state immediately in the setter call. If it matches, the setter returns early. For objects and arrays, a new reference always fails the `Object.is` check (since `{} !== {}` and `[] !== []`), so React does enqueue an update and re-render even if the contents are byte-identical. This is why spreading state without changing it (`setState({ ...state })`) causes a wasted render — the spread creates a new reference. The bailout is O(1) and avoids unnecessary render phase work. See Ch 05 for how the hook's eager-state bailout stores the comparison result in the queue.
 
 **Q2. How does React associate each useState call with the correct component?**
 
-Each useState call captures the currently rendering Fiber node through a module-level variable. During the render phase, React sets a global pointer to the current Fiber. When useState is called, it reads from that pointer's update queue. This is why hooks must be called in the same order every render: React relies on the call order to associate each useState with the correct slot in the Fiber's state list. If you put useState inside a conditional, the order shifts and state gets misaligned.
+Each `useState` call reads from a module-level pointer that React sets before calling your component function. During the render phase, React sets `currentlyRenderingFiber` to the Fiber being rendered and `workInProgressHook` to null. The first `useState` call creates or reads the first hook in the Fiber's `memoizedState` linked list. The second `useState` call reads the second hook. React advances a cursor (`workInProgressHook = workInProgressHook.next`) after each call. This is purely positional — React does not know your variable names (`count`, `name`). It only knows you called `useState` three times, in that order, so it assigns slot 0, slot 1, slot 2. This is why hooks must be called in the same order every render and cannot live inside conditionals, loops, or after early returns. If the call order shifts, slot indices misalign and one hook reads another's state. The ESLint `rules-of-hooks` plugin enforces this at compile time. See Ch 05 for the full hook internals and the dispatcher swap mechanism.
 
 **Q3. Explain the render phase versus commit phase distinction. Why does it matter for concurrent features?**
 
-The render phase is pure and can be interrupted, re-run, or abandoned. React calls your component, you return elements, React reconciles. No DOM is touched. This phase can be paused when a higher priority update comes in (Ch 04 Fiber time-slicing). The commit phase applies DOM mutations synchronously and cannot be interrupted. This distinction matters because it means React can start rendering an update, get interrupted by a user keystroke, throw away the partial work, and start fresh on the keystroke. The user never sees a half-rendered UI because the commit only happens once the render phase finishes without interruption.
+The render phase is pure and interruptible. React calls your component function from top to bottom, you return React elements (plain JS objects), and React reconciles the old and new element trees (Ch 06). No DOM is touched. This phase can be paused when a higher-priority update arrives — React checks `shouldYield()` after each fiber unit of work (Ch 04). If time is up, it saves the cursor in the module-level `workInProgress` variable and yields to the browser. The browser handles input and paint. React resumes later.
+
+The commit phase is synchronous and uninterruptible. React walks the finished work-in-progress tree and applies DOM mutations, runs `useLayoutEffect` callbacks, then the browser paints, then `useEffect` callbacks fire. This entire sequence is one atomic operation — the user never sees a half-applied tree.
+
+This distinction matters for concurrent features because it means React can start rendering an expensive update, get interrupted by a user keystroke, throw away the partial work-in-progress tree, and start fresh on the keystroke. The user never sees a half-rendered UI because commits only happen once the render phase finishes without interruption. Without this separation, every render would block until complete, and the browser would freeze during large updates. See Ch 04 for how Fiber's double-buffering makes this safe.
 
 **Q4. How did batching change between React 17 and React 18? What was the internal mechanism change?**
 
-React 17 only batched inside synthetic event handlers. It used a BatchedContext flag. When setState was called outside a React event (setTimeout, fetch callback), the flag was not set and each setState flushed synchronously. React 18 introduced automatic batching via a microtask mechanism. Instead of checking a batch flag, scheduleUpdateOnFiber defers the flush to a microtask. All setState calls during the same synchronous task create one microtask. When the task finishes and the stack empties, the microtask runs and processes all queued updates in a single render. flushSync provides an escape hatch for synchronous flush when needed.
+React 17 used a `BatchedContext` flag. Inside React's synthetic event handlers, React set this flag before calling your handler and cleared it after. When `setState` was called during a batched context, it queued updates without flushing. But outside React event handlers — in `setTimeout`, `fetch` callbacks, `addEventListener` handlers, or native Promises — the flag was not set, so each `setState` flushed synchronously. This caused inconsistent behavior: three `setState` calls in a click handler produced one render, but three in a setTimeout produced three renders.
+
+React 18 replaced the flag-based approach with a microtask flush. When `setState` is called, it calls `scheduleUpdateOnFiber`, which calls `ensureRootIsScheduled`. This schedules a single microtask per root per event via `queueMicrotask` or `Promise.resolve()`. All `setState` calls during the same synchronous task create update objects but share the same scheduled microtask. When the task finishes and the stack empties (Ch 02), the microtask runs and processes all queued updates in one render. `flushSync` provides an escape hatch for synchronous flush when needed. This mechanism is why React 18 batches updates everywhere — timeouts, promises, native events, network callbacks — without requiring `unstable_batchedUpdates`. See Ch 02 for how the microtask queue drain enables this.
 
 **Q5. If you call setState inside a useEffect that runs after every render, how many renders occur? What prevents infinite loops?**
 
-This creates a render cycle. The sequence: component renders, effect runs, setState inside effect enqueues an update, effect finishes, React detects pending update, schedules another render, component renders again, effect runs again. Without a guard, this loops forever. React has a maximum update depth limit (50 by default) to prevent infinite loops. If the setState sets the same primitive value, React bails out at the component level and breaks the cycle. If the setState depends on changing external data (like a timestamp), the loop continues until the limit is hit and React throws an error.
+This creates a render cycle. The sequence: component renders → commit phase applies DOM → browser paints → `useEffect` fires → `setState` inside the effect enqueues an update → React detects the pending update → schedules another render → component renders again → effect fires again. Without a guard, this loops forever.
+
+React enforces a maximum update depth (50 by default, configurable via `ReactDOM.createRoot` options). If the depth is exceeded, React throws an error: "Too many re-renders. React limits the number of renders to prevent an infinite loop." The cycle breaks naturally if the `setState` sets the same primitive value — React's `Object.is` bailout (see Q1) detects no change and skips the re-render. If the `setState` depends on changing external data (a timestamp, a counter, a random value), the loop continues until the limit is hit. The fix: add a dependency array to the effect, or use a condition inside the effect to prevent the `setState` when the state is already correct. See Ch 05 for how `useEffect` deps control re-execution frequency.
 
 ---
 
@@ -428,17 +444,17 @@ This creates a render cycle. The sequence: component renders, effect runs, setSt
 - Next render creates a new closure with new values.
 - Batching comes from the event loop model. All updates from one task drain into one render after the stack empties.
 - React 18 batches everything (timeouts, promises, native events) via microtask flush.
-- Pre-18 only batched inside React's synthetic event handlers (BatchedContext flag).
+- Pre-18 only batched inside React's synthetic event handlers (`BatchedContext` flag).
 - Double increment puzzle: both setters read the same snapshot. Fix with functional updater.
 - Functional updater lets React feed the running value during queue drain.
 - Render phase: pure, calls components, produces elements, no DOM, may be interrupted.
 - Commit phase: DOM mutations, synchronous, never interrupted.
-- setState with same primitive value = bailout via Object.is. No render.
+- `setState` with same primitive value = bailout via `Object.is`. No render.
 - Objects always trigger render on new reference even if contents identical.
 - State in callbacks is stale if callback captured old render closure. Fix with functional updater or ref.
 - Side effects in render are wrong. Render is pure and may run multiple times.
-- useReducer centralizes update logic into testable pure reducers.
-- flushSync forces synchronous render. Use sparingly only when needed.
+- `useReducer` centralizes update logic into testable pure reducers.
+- `flushSync` forces synchronous render. Use sparingly only when needed.
 - StrictMode double-invokes components in dev to find impure render logic. Dev only.
 - Each update is a small object on the heap. Queue is a linked list. O(1) enqueue, O(n) drain.
 - Re-render does not mean DOM change. Reconciliation finds no diff = no DOM mutation.

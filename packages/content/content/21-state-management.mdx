@@ -5,22 +5,44 @@ part: "Rendering & Build"
 description: "useReducer, Zustand, Jotai, Redux, Context"
 ---
 
-
 > **Prerequisites:** understanding of React re-render mechanics and hooks. You need to know how components update when state changes. You need to understand the difference between server state and client state. You also need the decision tree for where state should live in the component tree.
 
 ---
 
-## Problem
+## The Question Everyone Gets Wrong
 
-"How do you manage state in React?" is a trap if you answer with a library name. The real problem is that most teams pick a single tool (usually Redux or Context) for everything. Then they hit pain. Components re-render too much. State is in the wrong place. Server data gets stuffed into a client store. Prop drilling spirals. The fix is not a better library. The fix is a taxonomy.
+"How do you manage state in React?"
 
-Most state is local. Some state is server state. A little is genuinely global client state. Only that kind needs a store.
+If you answer with a library name — Redux, Context, Zustand — you just walked into a trap. The interviewer is not testing your library knowledge. They are testing whether you understand that **state has kinds**, and each kind needs a different tool.
 
-## Why Existing Solution Failed
+Here is what happens when teams get this wrong: they pick Redux for everything. Every button click dispatches an action. A simple toggle goes through a reducer. The codebase becomes a ceremony. Then someone puts server data in Redux. Now they are reimplementing caching, deduplication, and background refetching — badly. TanStack Query already does all of that.
 
-Before React had hooks, state lived in classes. You used `setState` on class components. Then Redux became the default for "serious" apps. It was overkill for most state. Every state change dispatched an action, went through a reducer, and updated a single store. Even toggle state went through this pipeline.
+The fix is not a better library. The fix is a way of thinking.
 
-Then Context arrived. It looked like a store. You put everything in one provider. But Context has a critical limitation. It cannot selectively subscribe.
+## Think of It Like a Filing Cabinet
+
+Here is the mental model that makes state management click.
+
+Imagine a filing cabinet with three drawers:
+
+**Drawer 1: "My Stuff"** — This belongs to one person (one component). The search input in the header. The open/closed state of a modal. The selected tab. This is `useState`. Keep it local. Nobody else needs it.
+
+**Drawer 2: "Shared Stuff"** — A few people (components) need this. The current user's profile. The active filter on a list page. The wizard step in a multi-step form. This gets lifted to a common parent. Or if it changes a lot and many things read it selectively, it goes to Zustand.
+
+**Drawer 3: "Company-Wide Stuff"** — Everyone needs this. The theme. Whether the user is logged in. The language preference. This is Context — but only if it rarely changes. If it changes every second, Context will make everything re-render. Use Zustand instead.
+
+**And then there is a separate drawer: "Other People's Stuff"** — This is server data. Contacts from the API. Product listings. User profiles fetched from the backend. This is NOT your state. It is a cache. TanStack Query handles it. Do not put this in any of the first three drawers.
+
+That is the whole taxonomy. Two questions tell you which drawer:
+
+1. **Who needs this?** (One component? A few nearby? Everyone? The server?)
+2. **How often does it change?** (Never? Sometimes? Every frame?)
+
+Place the state on that grid and the right tool is obvious.
+
+## The Context Problem Nobody Warns You About
+
+Context looks simple. You create a provider, wrap your app, and every component can read the value. But here is the catch.
 
 ```jsx
 const AppCtx = createContext();
@@ -36,42 +58,15 @@ function Provider({ children }) {
 }
 ```
 
-Every time `cartCount` changes, the `value` object is new. Every component consuming `AppCtx` re-renders, even ones that only read `theme`. Context has no way to say "I only care about `theme`." That is the core limitation. Context is a dependency injection and broadcast mechanism. It is not a fine-grained store.
+Every time `cartCount` changes, the `value` object is a new reference. React sees a new value and re-renders **every single component** that calls `useContext(AppCtx)`. Even the ones that only read `theme`. Even the ones that do not care about `cartCount` at all.
 
-## Mental Model
+Context is like a megaphone. It broadcasts to everyone. There is no way to whisper to just the components that need the changed value.
 
-There is no single "state." There are KINDS of state. Each kind has different access patterns. The right tool matches the kind. Two axes decide everything: WHO needs it (from one component to the whole app) and HOW OFTEN it changes or how selectively it is read.
+This is fine for things that rarely change — theme, locale, auth status. The broadcast cost is negligible because it almost never happens. But for anything that changes frequently — a counter, a cursor position, real-time data — Context will kill your performance.
 
-Every tool, including useState, useReducer, Context, Zustand, Jotai, Redux, and TanStack Query, sits on those two axes. Picking wrong is the root of both prop-drilling pain and global re-render pain.
+## The Selector Trick: How Zustand Solves It
 
-From the two axes you understand when to lift state, when Context causes problems, why external stores use selectors, and why server state is its own universe. No memorizing libraries. You place the state on the grid and read off the right tool.
-
-| Tool | Model | Reach for it when |
-|---|---|---|
-| `useState` | local cell | one component's state |
-| `useReducer` | local plus pure transitions | complex multi-field transitions, wizards |
-| **Context** | broadcast and DI, no selectors | rarely-changing global values (theme, auth, locale) |
-| **Zustand** | external store plus selectors | frequent or selective global client state, minimal API |
-| **Jotai** | bottom-up atoms | derived and composable atomic state, fine-grained |
-| **Redux Toolkit** | single store plus reducers plus middleware | big teams, complex flows, devtools and time-travel |
-| **TanStack Query** | server cache | anything from a server. This is not client state |
-
-Modern default for a new app: Query (server) plus local state plus a little Zustand (global client). Redux is still common in large and legacy codebases. It works well when its middleware ecosystem is useful.
-
-## Visualization
-
-```mermaid
-flowchart TD
-  change[cartCount changes] --> newval[Provider value object is new]
-  newval --> all["ALL consumers re-render<br/>(theme-only readers included)"]
-  subgraph store["external store + selector"]
-    schange[count slice changes] --> sel["only components whose selector<br/>output changed re-render"]
-  end
-```
-
-Context broadcasts changes to all consumers. External stores with selectors only update components that read the changed slice. This is the key difference.
-
-## Engine Simulation
+Zustand lives outside React. It is a plain JavaScript store. Components subscribe to it with selectors — functions that pick exactly the slice they need.
 
 ```js
 const useStore = create((set) => ({
@@ -81,24 +76,26 @@ const useStore = create((set) => ({
 }));
 
 function Counter() {
-  const count = useStore((s) => s.count);   // subscribe to the count slice only
+  const count = useStore((s) => s.count);   // I only care about count
   return <button onClick={useStore.getState().inc}>{count}</button>;
 }
 function Profile() {
-  const user = useStore((s) => s.user);     // subscribes to user only
+  const user = useStore((s) => s.user);     // I only care about user
   return <span>{user?.name}</span>;          // does NOT re-render when count changes
 }
 ```
 
-The store lives outside React. Each component's selector runs on every store change. If its output has not changed (using `Object.is` comparison), React skips that component. So `inc()` re-renders `Counter` but not `Profile`. No provider. No context-broadcast re-render.
+When `inc()` runs, Zustand updates the store. Then it checks every subscriber's selector output. If your selector returned the same value as last time (by `Object.is` comparison), your component does not re-render. `Profile` picks `s.user`. `user` did not change. `Profile` is skipped.
 
-Here is how it works internally. When `inc()` is called, Zustand calls the update function. This creates a new state object. Zustand then runs every subscriber's selector. It compares the old selector output with the new one. If they are the same (by `Object.is`), the subscriber is skipped. If different, the subscriber tells React to re-render.
+This is the key difference from Context. Context says "everyone re-render." Zustand says "only re-render if your specific slice changed."
 
-The selector output comparison is what makes external stores scale where Context cannot. Context has no selectors. It always sends a new object reference. All consumers re-render.
+Think of it like email vs. a group chat. Context is a group chat — everyone gets every message. Zustand is email — you only get messages addressed to you.
 
-## Internal Implementation
+## useReducer: When You Have Many Moves
 
-useReducer centralizes complex state transitions into one pure function. This is the pattern that scales conceptually to Redux.
+Sometimes a component has complex state with many possible transitions. A form with five fields, submit, error, and loading states. Using five separate `useState` calls creates a mess — you lose the relationship between fields, and updating one field does not tell you what other fields should change.
+
+`useReducer` bundles all transitions into one pure function:
 
 ```js
 function reducer(state, action) {
@@ -112,17 +109,50 @@ function reducer(state, action) {
 const [state, dispatch] = useReducer(reducer, initial);
 ```
 
-The reducer is a pure function. Given state and action, it returns the next state. No side effects. No mutations. This makes it testable in isolation. You can unit test a reducer without rendering any React component.
+Why is this better for complex forms? Because the reducer is a pure function. Given the current state and an action, it produces the next state. No side effects. No mutations. You can test it without rendering anything. You can reason about it by reading the switch statement. And it scales conceptually to Redux — a Redux reducer is the same pattern, just at app scale.
 
-Redux scales this pattern. A Redux reducer handles actions from anywhere in the app. Middleware intercepts actions for logging, async, or side effects. The devtools log every action and enable time-travel debugging.
+## The Server State Trap
 
-Zustand's internal implementation is simpler. It uses a publish-subscribe pattern. Each selector is a subscriber. Zustand stores subscribers in a Set. When state changes, it iterates the Set and calls each subscriber's listener. The listener compares old and new selector output. If different, it triggers a React re-render via `useSyncExternalStore`.
+Here is the mistake that wastes more engineering time than any other: putting server data in a client store.
 
-## Real World Example
+When you fetch contacts from an API and store them in Redux or Zustand, you now need to handle: caching (do not refetch if data is fresh), deduplication (two components requesting the same data should share one fetch), background refetching (keep data fresh while the user works), garbage collection (remove unused data from memory), and optimistic updates (patch the UI before the server responds).
 
-You have a dashboard app. The current code uses one Context provider for everything: user, theme, notifications, and a real-time counter. The counter updates every few seconds. Every update re-renders the entire app.
+TanStack Query does all of this. It is a server-state cache with a stale-while-revalidate policy. You give it a query key (like `['contacts', { page, filters }]`) and it handles the rest.
 
-You split the provider into `ThemeContext`, `UserContext`, and move the counter to Zustand. The counter store:
+```js
+const { data, isLoading, isFetching } = useQuery({
+  queryKey: ['contacts', { filters, page }],
+  queryFn: () => api.getContacts(filters, page),
+  staleTime: 30_000,      // fresh for 30 seconds
+  gcTime: 5 * 60_000,     // keep in memory for 5 minutes after unmount
+});
+```
+
+Server state is not your state. It is a cache of someone else's data. Treat it that way.
+
+## The Full Grid
+
+Here is the complete taxonomy. Memorize the pattern, not the libraries:
+
+| Drawer | Scope | Volatility | Tool |
+|--------|-------|------------|------|
+| My Stuff | One component | Any | `useState` |
+| Complex Transitions | One component, many fields | Any | `useReducer` |
+| Company-Wide (rare) | Everyone | Changes rarely | Context |
+| Company-Wide (frequent) | Everyone or selective | Changes often | Zustand |
+| Fine-Grained Derived | Many small pieces | Derived/computed | Jotai |
+| Big Team + Middleware | Everyone | Complex flows | Redux Toolkit |
+| Other People's Stuff | Server | Varies | TanStack Query |
+
+**Modern default for a new app:** TanStack Query (server) + useState (local) + a little Zustand (global client). Redux only when you need its middleware ecosystem at scale.
+
+## Real World: Fixing a Bad Architecture
+
+You inherit a dashboard. One giant Context provider wraps the entire app. It holds user, theme, notifications, and a real-time counter that updates every 3 seconds. Every tick re-renders the entire app.
+
+**Step 1:** Split the provider. `ThemeContext` for theme (rarely changes, Context is fine). `UserContext` for user (rarely changes, Context is fine).
+
+**Step 2:** Move the counter to Zustand.
 
 ```js
 const useCounterStore = create((set) => ({
@@ -131,29 +161,17 @@ const useCounterStore = create((set) => ({
 }));
 ```
 
-Only components that call `useCounterStore((s) => s.value)` re-render. The theme picker and user avatar stop re-rendering on every counter tick. The app feels faster. The profiler confirms fewer renders.
+**Step 3:** Only components that call `useCounterStore((s) => s.value)` re-render on tick. The theme picker and user avatar stop re-rendering. The profiler confirms fewer renders.
 
-Later, you add server-side data. You use TanStack Query instead of putting it in Zustand. Query handles caching, refetching, and loading states. Zustand only holds the small amount of truly client-side global state.
-
-## Tradeoffs
-
-**Context for global state:** Simple setup, no extra deps. But re-renders all consumers. Good for rarely-changing values like theme. Bad for hot state.
-
-**Zustand:** Minimal API. External store with selectors. Good for frequent global state. Small bundle. But it is another dependency. Components subscribe manually.
-
-**Redux Toolkit:** Predictable state updates. Excellent devtools. Middleware ecosystem. Mature patterns. But boilerplate-heavy for simple cases. Overkill for most apps.
-
-**Jotai:** Fine-grained atoms. Good for derived state. Composable. But the mental model is different from the store pattern. Can be confusing for teams.
-
-**Server state in client stores:** You re-implement caching, deduplication, and refetching badly. Use TanStack Query instead.
+**Step 4:** Add server data with TanStack Query. Now the dashboard has clear separation: server cache (Query), global client state (Zustand), rare globals (Context), and local UI state (useState).
 
 ## Common Mistakes
 
-- One giant Context for everything that changes often. This causes app-wide re-renders.
-- Server data in a client store. This means re-implementing Query badly.
-- Redux for trivial state. Boilerplate with no payoff.
-- Selectors returning new objects each call like `s => ({a: s.a})`. This always looks "changed" and defeats optimization. Return primitives or use shallow-equality.
-- Lifting state too high "just in case." This causes re-renders and coupling.
+- **One giant Context for everything that changes often.** This causes app-wide re-renders. Split or move to Zustand.
+- **Server data in a client store.** You re-implement TanStack Query badly. Just use Query.
+- **Redux for trivial state.** A toggle does not need actions, reducers, and middleware.
+- **Selectors returning new objects** like `s => ({ a: s.a, b: s.b })`. This creates a new reference every time, so the component always re-renders. Return primitives or use shallow equality.
+- **Lifting state too high "just in case."** This causes unnecessary re-renders and tight coupling. Keep state as low as possible.
 
 ## SDE-2 Interview Answer
 
@@ -185,28 +203,163 @@ I also make sure the team understands the re-render cost. We use the React profi
 
 ## Follow-up Questions
 
-1. Place these on the scope x volatility grid and pick a tool: theme, contacts list, a modal's open flag, cart count read across the app, a multi-step form. (application)
+1. Place these on the scope x volatility grid and pick a tool: theme, contacts list, a modal's open flag, cart count read across the app, a multi-step form.
 
-2. The team has one giant Context for all app state. It re-renders everything on every change. Walk through two ways to fix this within Context and one way outside it. (analysis)
+**Q1: Place these on the scope x volatility grid and pick a tool: theme, contacts list, a modal's open flag, cart count read across the app, a multi-step form.**
 
-3. Write a `useReducer` for a 4-field form with submit, error, and field-update actions. Why is this more testable than four `useState` calls? (application plus analysis)
+| State | Scope | Volatility | Tool | Why |
+|---|---|---|---|---|
+| **Theme** | Everyone (app-wide) | Rarely changes (user toggles maybe once per session) | **Context** | Broadcast cost is negligible because it almost never changes. Every component reads it, and Context's "megaphone" behavior is fine for rare updates. |
+| **Contacts list** | Server-fetched data, read by multiple components | Changes when refetched, stale-while-revalidate | **TanStack Query** | This is server state — a cache of someone else's data. Query handles caching, deduplication, background refetch, and garbage collection. Don't put this in any client store. |
+| **Modal's open flag** | One component (the modal itself or its trigger) | Changes on user click (moderate) | **useState** | Local to one component. No other component needs to know if the modal is open. Keep it as low as possible. |
+| **Cart count (read across the app)** | Multiple components (header badge, cart page, nav) | Changes frequently (add/remove items) | **Zustand** | Many components read it selectively. Zustand's selector subscriptions ensure only components reading `cartCount` re-render. Context would re-render everything on every cart change. |
+| **Multi-step form** | One component tree (the form) | Complex transitions between steps | **useReducer** | Many interdependent fields with complex state transitions (step changes, field updates, validation, submission). A reducer centralizes transitions into one testable function. |
 
-4. A component reads `useStore((s) => ({ a: s.a, b: s.b }))` and re-renders too often. Explain why and fix the selector. (debugging)
+2. The team has one giant Context for all app state. It re-renders everything on every change. Walk through two ways to fix this within Context and one way outside it.
 
-5. Design the state architecture for a real-time collaborative document editor. Multiple users edit simultaneously. Offline support needed. Walk through your tool choices and why. (synthesis)
+**Q2: The team has one giant Context for all app state. It re-renders everything on every change. Walk through two ways to fix this within Context and one way outside it.**
+
+**Fix 1 (Context): Split into multiple contexts.** Separate the monolithic `AppContext` into `ThemeContext`, `UserContext`, `CartContext`, and `NotificationsContext`. Each provider wraps only the subtree that needs it. Theme changes only re-render components under `ThemeContext`. Cart changes only re-render components under `CartContext`. This reduces blast radius — each context's broadcast affects fewer components. But frequent changes (like a real-time counter) still re-render everything under their context.
+
+**Fix 2 (Context): Use `useMemo` on the context value and split providers by update frequency.** The current provider creates a new `value` object every render, causing all consumers to re-render. Memoize the value and split by volatility:
+
+```jsx
+function CartProvider({ children }) {
+  const [cartCount, setCartCount] = useState(0);
+  const value = useMemo(() => ({ cartCount, setCartCount }), [cartCount]);
+  return <CartCtx.Provider value={value}>{children}</CartCtx.Provider>;
+}
+```
+
+This prevents unnecessary re-renders when unrelated state in the same provider changes. But it's a band-aid — Context still broadcasts to all consumers of that context.
+
+**Fix 3 (outside Context): Move frequently-changing state to Zustand.** Replace the cart count and real-time counter with Zustand stores. Components subscribe via selectors — `useStore(s => s.cartCount)`. Only components whose selector output changed re-render. This is the fundamental scaling difference: Context says "everyone re-render," Zustand says "only re-render if your slice changed." Keep Context for genuinely rare globals (theme, locale). Move anything volatile to Zustand.
+
+3. Write a `useReducer` for a 4-field form with submit, error, and field-update actions. Why is this more testable than four `useState` calls?
+
+**Q3: Write a `useReducer` for a 4-field form with submit, error, and field-update actions. Why is this more testable than four `useState` calls?**
+
+```ts
+type FormState = {
+  name: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+  status: "idle" | "submitting" | "error" | "success";
+  error: string | null;
+};
+
+type FormAction =
+  | { type: "FIELD"; name: string; value: string }
+  | { type: "SUBMIT" }
+  | { type: "ERROR"; message: string }
+  | { type: "SUCCESS" }
+  | { type: "RESET" };
+
+function formReducer(state: FormState, action: FormAction): FormState {
+  switch (action.type) {
+    case "FIELD":
+      return { ...state, [action.name]: action.value, error: null };
+    case "SUBMIT":
+      return { ...state, status: "submitting", error: null };
+    case "ERROR":
+      return { ...state, status: "error", error: action.message };
+    case "SUCCESS":
+      return { ...state, status: "success", error: null };
+    case "RESET":
+      return initialState;
+    default:
+      return state;
+  }
+}
+```
+
+This is more testable than four `useState` calls because the reducer is a **pure function** — given a state and an action, it returns the next state deterministically. You can test it without rendering any component:
+
+```ts
+test("FIELD update clears error", () => {
+  const state = { ...initial, error: "Name required" };
+  const next = formReducer(state, { type: "FIELD", name: "name", value: "Ash" });
+  expect(next.name).toBe("Ash");
+  expect(next.error).toBeNull();
+});
+
+test("SUBMIT sets status to submitting", () => {
+  const next = formReducer(initial, { type: "SUBMIT" });
+  expect(next.status).toBe("submitting");
+});
+```
+
+With four `useState` calls, testing requires rendering the component, triggering events, and asserting on the DOM. You cannot test state transitions in isolation. The reducer also makes state transitions explicit — you can see every possible transition in the switch statement. With separate `useState`, the relationship between fields is implicit and spread across multiple `setX` calls.
+
+4. A component reads `useStore((s) => ({ a: s.a, b: s.b }))` and re-renders too often. Explain why and fix the selector.
+
+**Q4: A component reads `useStore((s) => ({ a: s.a, b: s.b }))` and re-renders too often. Explain why and fix the selector.**
+
+The problem: the selector `(s) => ({ a: s.a, b: s.b })` creates a **new object reference** on every call. Zustand uses `Object.is` to compare the selector's output with the previous result. Since `{ a: s.a, b: s.b }` is a new object every time (even if `a` and `b` haven't changed), `Object.is` returns `false`, and the component re-renders on every store update — even if `a` and `b` are unchanged.
+
+The fix depends on your needs:
+
+**Option 1: Two separate selectors (preferred).** Split into two hooks so each component subscribes independently:
+
+```jsx
+function MyComponent() {
+  const a = useStore((s) => s.a);
+  const b = useStore((s) => s.b);
+  // Component only re-renders if a OR b actually changed
+}
+```
+
+Each selector returns a primitive. `Object.is` on primitives works correctly — no new reference is created.
+
+**Option 2: Use Zustand's `shallow` equality comparator.**
+
+```jsx
+import { shallow } from "zustand/shallow";
+
+const { a, b } = useStore(
+  (s) => ({ a: s.a, b: s.b }),
+  shallow // compares shallowly instead of by reference
+);
+```
+
+`shallow` does a `Object.keys` comparison of the result object's values. If `a` and `b` are unchanged primitives or stable references, the component won't re-render. This is the right tool when you genuinely need multiple values from the store in one selector and can't split them.
+
+The root cause is always the same: **returning new objects from selectors defeats reference equality.** Return primitives, split selectors, or use shallow equality.
+
+5. Design the state architecture for a real-time collaborative document editor. Multiple users edit simultaneously. Offline support needed. Walk through your tool choices and why.
+
+**Q5: Design the state architecture for a real-time collaborative document editor.**
+
+This is a complex architecture with multiple state concerns:
+
+**Document content (server state, collaborative):** Use a **CRDT library** (like Yjs or Automerge) for conflict-free collaborative editing. CRDTs merge concurrent edits without conflicts. The CRDT document is the source of truth for content. Sync it with the server via **WebSockets** — each edit is broadcast to all connected clients. Use **TanStack Query** for the initial document fetch and metadata (title, permissions, last saved). Query handles caching and reconnection. The CRDT handles real-time sync separately from HTTP.
+
+**Local editor state (client state, volatile):** Use **useState** for cursor position, selection range, active formatting (bold/italic), and the undo/redo stack. These are local to the editor component and change on every keystroke. No global store needed — they're component-scoped.
+
+**Collaboration presence (client state, real-time):** Use **Zustand** for collaborator cursors, selection highlights, and online status. This changes frequently (other users move their cursors) and multiple components need it (the editor canvas, the collaborator avatars, the presence indicator). Zustand's selector subscriptions ensure only the components reading `collaborators` re-render on presence updates. Do not use Context — presence updates every frame would re-render everything.
+
+**Offline support:** The CRDT library (Yjs) supports offline editing natively — edits are stored in the local CRDT and merged when connectivity restores. Use the **Service Worker API** to cache static assets. Use **IndexedDB** to persist the CRDT document locally. When offline, the editor reads from IndexedDB. When online, it syncs via WebSocket and pushes pending edits. TanStack Query's `networkMode: "always"` ensures queries work offline with cached data.
+
+**Architecture summary:**
+- Yjs/CRDT: document content + collaborative sync
+- TanStack Query: initial fetch, metadata, reconnection
+- Zustand: collaborator presence (frequent, selective reads)
+- useState: local editor state (cursor, selection, formatting)
+- IndexedDB: offline document persistence
+- Service Worker: offline static asset caching
 
 ## Mental Trigger
 
-**Two axes: scope x volatility. Pick the tool from the cell.**
+**Filing cabinet: My Stuff (useState), Shared Stuff (lift/Zustand), Company-Wide (Context/Zustand), Other People's Stuff (Query). Two questions: who needs it? how often does it change?**
 
 ## One Page Revision
 
-- State has kinds. Pick by scope x volatility and selectivity.
-- Most state is local. Server state is a cache (Query). Only genuinely global client state needs a store.
-- Context broadcasts. A value change re-renders all consumers. Good for rare global values. Bad for hot state.
-- Split contexts or memoize to mitigate within Context.
-- External stores (Zustand, Jotai, Redux) subscribe via selectors. Only readers of a changed slice re-render.
-- useReducer centralizes complex transitions into a pure, testable function.
-- Redux is useReducer at app scale with middleware and devtools.
-- Modern default: Query + local + a little Zustand. Redux for large, complex, or legacy needs.
+- State has kinds. Pick by scope x volatility. Two questions: who needs it? how often does it change?
+- Most state is local (useState). Server state is a cache (TanStack Query). Only genuinely global client state needs a store.
+- Context is a megaphone — broadcasts to everyone. Good for rare global values. Bad for hot state. Split contexts to reduce blast radius.
+- Zustand is email — only subscribers of a changed slice re-render. Use for frequent or selective global state.
+- useReducer centralizes complex transitions into one pure, testable function. Redux is useReducer at app scale.
 - Selectors returning new objects defeat optimization. Return primitives or use shallow equality.
+- Modern default: TanStack Query + useState + a little Zustand. Redux for large, complex, or legacy needs.
+- The filing cabinet mental model: My Stuff, Shared Stuff, Company-Wide, Other People's Stuff. Place the state, pick the tool.

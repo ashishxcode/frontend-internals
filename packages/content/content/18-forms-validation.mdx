@@ -5,19 +5,25 @@ part: "Web Platform & Quality"
 description: "React Hook Form, Zod, controlled inputs, validation"
 ---
 
-## Problem
+## The Form That Drags
 
 Your form is slow. Every keystroke makes the whole page jank. You have thirty fields and every character typed re-renders every one of them. Users feel the delay. The form also has validation bugs. Errors appear at the wrong time. The submit handler sends bad data to the server. Types do not match the API. Form state is messy with loading, error, and submission race conditions.
 
-## Why Existing Solution Failed
+Here is the question that separates good forms from bad ones: **who owns each field's value?** If React owns it (controlled), every keystroke re-renders the whole form. If the DOM owns it (uncontrolled), React stays out of the way until submit. That one decision determines performance, validation timing, and complexity.
+
+## Why the Naive Approach Burns You
 
 The old approach put every input value in React state with `useState`. Each keystroke called `setState`, triggering a re-render of the entire form component and all its children. For a form with thirty fields, every keystroke reconciled thirty inputs. React cannot know which input changed so it diffs them all. This is wasted work.
 
 Validation was also messy. Teams wrote validation logic inline inside event handlers. Or they maintained a separate type definition and a separate validation schema that drifted apart. Types said `email: string` but the validator allowed empty strings. These two sources of truth inevitably diverged. When types changed the validation did not update, or vice versa.
 
-## Mental Model
+Think of it like a librarian who re-shelves the entire library every time someone checks out one book. Technically correct, absurdly wasteful.
+
+## The Mental Model: Who Owns the Value?
 
 A form is just state plus a validation function: `errors = validate(values)`. The UI is a function of `(values, errors, touched, submitting)`. The only real decision is WHO OWNS each field's value. React controlled means the value lives in state and every keystroke re-renders. DOM uncontrolled means the value lives in the input and React reads it on submit via a ref. Performance and usability both come from that ownership choice.
+
+The core insight: **the form's performance is determined by how many times React touches the inputs on each keystroke.**
 
 ## Visualization
 
@@ -160,14 +166,77 @@ Internally, `handleSubmit` calls `schema.parse` (or `safeParse`) on the form dat
 ## Follow-up Questions
 
 1. Controlled vs uncontrolled: where does the value live and what is the performance consequence of each?
+
+**Q1: Controlled vs uncontrolled: where does the value live and what is the performance consequence of each?**
+
+In a **controlled** input, the value lives in React state. Every keystroke triggers `onChange`, which calls `setState`, which schedules a re-render of the component. React reconciles the entire component tree (or at least the subtree), diffs the virtual DOM, and updates the input's `value` prop in the real DOM. This means every keystroke causes a full render cycle for the form component and all its children. For a form with 30 fields, each keystroke reconciles all 30 inputs even though only one changed. In an **uncontrolled** input, the value lives in the DOM node itself. React sets `defaultValue` once during the initial render and then never touches the input's value again. The browser manages the input's internal state natively. On submit, you read `ref.current.value` to get the current value. The performance consequence is significant: uncontrolled inputs cause zero re-renders on keystroke because React is not involved in the update loop. The tradeoff is that you cannot run live validation or show real-time error messages without reading the ref manually. React Hook Form exploits this by keeping inputs uncontrolled under the hood but subscribing to change events outside React's render cycle, giving you the performance of uncontrolled with the reactivity of controlled.
+
 2. Why does react-hook-form not re-render the whole form on each keystroke? What internal mechanism does it use instead?
+
+**Q2: Why does react-hook-form not re-render the whole form on each keystroke? What internal mechanism does it use instead?**
+
+React Hook Form (RHF) keeps inputs **uncontrolled** internally. When you call `register("email")`, RHF attaches a `ref` to the input and subscribes to its native `change` and `blur` events directly on the DOM node — outside of React's render cycle. When the user types, the DOM event fires and RHF updates its own internal `FormStore` (a plain JavaScript object, not React state). No `setState` is called, so no React re-render is triggered. RHF's internal store is a `useRef`-backed map of field values, errors, and touched states. When you need to read form state (e.g., `{ values, errors }`), RHF uses `useSyncExternalStore` or a custom subscription mechanism to subscribe only to the specific slices you read. If your component reads `formState.errors.email`, it only re-renders when the `errors.email` value changes — not when any other field's error changes. This is the same selector subscription pattern used by Zustand. The result: keystroke in field A causes zero re-renders in the form component. Only when validation runs and an error changes does the affected field re-render.
+
 3. Write a Zod schema and infer its type from it. Why validate at runtime if you have TypeScript types?
+
+**Q3: Write a Zod schema and infer its type from it. Why validate at runtime if you have TypeScript types?**
+
+```ts
+import { z } from "zod";
+
+const UserSchema = z.object({
+  name: z.string().min(2, "Name must be at least 2 characters"),
+  email: z.string().email("Invalid email address"),
+  age: z.number().int().min(18, "Must be at least 18"),
+});
+
+type User = z.infer<typeof UserSchema>;
+// Equivalent to: { name: string; email: string; age: number }
+```
+
+TypeScript types are erased at compile time — they exist only during development and in your IDE. The JavaScript runtime has no concept of `string` or `number`. When data arrives from an API, a form submission, or `localStorage`, it is untyped `any`. A response that should be `{ name: string, age: number }` could actually be `{ name: 42, age: "eighteen" }` — TypeScript cannot catch this because the data doesn't originate from your code. Zod validation runs at runtime and catches these mismatches. It also gives you a single source of truth: the schema defines both the runtime validation rules AND the TypeScript type via `z.infer`. You never maintain a separate interface that drifts out of sync. When the schema changes, the type updates automatically. This is especially critical at API boundaries — server responses, URL params, form inputs, environment variables — where untrusted data enters your system.
+
 4. When do you validate: on change, on blur, or on submit? Why mark `touched` and what order gives best UX?
+
+**Q4: When do you validate: on change, on blur, or on submit? Why mark `touched` and what order gives best UX?**
+
+The best UX follows a progression: **on submit** (always — prevents bad data from reaching the server), **on blur** (shows errors after the user leaves a field — catches mistakes without being annoying), and **on change with debounce** (for fields that benefit from instant feedback, like password strength or confirmation matching). Validating on every keystroke without debounce feels hostile — the user types "j" and sees "Name must be at least 2 characters." The `touched` state tracks which fields the user has interacted with (blurred at least once). It prevents showing errors on fields the user hasn't visited yet. Without `touched`, a form with 10 fields shows errors on all 10 immediately on submit, even fields the user hasn't filled in. With `touched`, you only show errors for fields the user has visited or tried to submit. The ideal order: first render shows no errors. On blur, validate that specific field and show its error. On change, clear the error if the user fixes it (re-validate on change only for fields that already have an error). On submit, validate all fields and show all errors. This gives progressive disclosure of validation feedback — the user is guided, not overwhelmed.
+
 5. Model form state so that "submitting" cannot coexist with a stale error. Use a discriminated union approach.
+
+**Q5: Model form state so that "submitting" cannot coexist with a stale error. Use a discriminated union approach.**
+
+A discriminated union makes impossible states unrepresentable. Instead of three independent booleans (`isSubmitting`, `isError`, `isSuccess`), use a single `status` field as the discriminant:
+
+```ts
+type FormState =
+  | { status: "idle" }                                    // no submission in progress
+  | { status: "submitting" }                              // mid-flight, no error possible
+  | { status: "error"; error: string }                    // failed, with error message
+  | { status: "success"; data: Response };                // succeeded, with response
+
+// Usage in a reducer:
+function formReducer(state: FormState, action: FormAction): FormState {
+  switch (action.type) {
+    case "SUBMIT":
+      return { status: "submitting" };          // clears any old error automatically
+    case "ERROR":
+      return { status: "error", error: action.message };
+    case "SUCCESS":
+      return { status: "success", data: action.data };
+    case "RESET":
+      return { status: "idle" };
+    default:
+      return state;
+  }
+}
+```
+
+When you dispatch `SUBMIT`, the state transitions to `{ status: "submitting" }` — there is no `error` field in this variant. A stale error from a previous attempt is structurally impossible because the shape doesn't include it. You cannot accidentally display a stale error during submission because the TypeScript type won't let you access `state.error` without narrowing to the `"error"` variant first. This eliminates an entire class of bugs: "error shown during loading," "error persists after new submission," "success and error both displayed." Three independent booleans (`isSubmitting && isError && !isSuccess`) allow states like `(true, true, false)` which is logically impossible but structurally representable. The discriminated union makes the state machine explicit and the compiler enforces valid transitions.
 
 ## Mental Trigger
 
-Who owns the value decides the cost.
+**Who owns the value decides the cost.**
 
 ## One Page Revision
 
