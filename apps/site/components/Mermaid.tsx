@@ -52,21 +52,21 @@ function themeConfig(isDark: boolean) {
       loopTextColor: isDark ? "#3b82f6" : "#2563eb",
 
       // Typography
-      fontSize: "13px",
+      fontSize: "16px",
       fontFamily:
         'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
     },
     flowchart: {
-      useMaxWidth: true,
+      useMaxWidth: false,
       htmlLabels: true,
       curve: "basis" as const,
-      padding: 16,
+      padding: 24,
     },
     sequence: {
-      useMaxWidth: true,
+      useMaxWidth: false,
       hideUnusedParticipants: true,
       mirrorActors: false,
-      bottomMarginAdj: 8,
+      bottomMarginAdj: 16,
     },
   };
 }

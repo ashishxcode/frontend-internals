@@ -6,23 +6,23 @@ description: "XSS, CSRF, CSP, SameSite, token storage"
 ---
 
 
-> Builds on Ch 13 (cookies, headers, CORS) and Ch 03 (React rendering/escaping). Security is a
-> standard SDE-2 probe and a JD "high ownership" signal.
+> Prerequisites: HTTP cookies, CORS headers & preflight (Ch 13); React's default text-escaping in JSX (Ch 03). Security is a
+> standard SDE-2 topic and a JD "high ownership" signal.
 
 ---
 
 ## The one mental model
 
-> **Two rules cover almost all web security: (1) NEVER TRUST INPUT — anything from a user, URL,
-> or API can be hostile, so treat data as data, never as code. (2) NEVER LEAK AUTHORITY — don't
+> **Two rules cover almost all web security. One: NEVER TRUST INPUT. Anything from a user, URL,
+> or API can be hostile. Treat data as data, never as code. Two: NEVER LEAK AUTHORITY. Do not
 > let one origin act with another origin's credentials. The browser's whole job is ISOLATION
-> between origins; attacks are ways to break that isolation (XSS injects code into your origin;
-> CSRF rides your credentials from another origin). Defenses re-assert "data isn't code" and
-> "credentials only flow where intended."**
+> between origins. Attacks are ways to break that isolation. XSS injects code into your origin.
+> CSRF rides your credentials from another origin. Defenses re-assert that data is not code and
+> credentials only flow where intended.**
 
-From those two rules you derive XSS (and why React's escaping prevents it), CSRF (and why
-SameSite cookies stop it), CSP, and the token-storage tradeoff. No memorizing an attack list —
-each is "untrusted input became code" or "authority leaked across origins."
+From those two rules you can understand XSS (and why React's escaping prevents it), CSRF (and why
+SameSite cookies stop it), CSP, and the token-storage tradeoff. No memorizing an attack list.
+Each attack is "untrusted input became code" or "authority leaked across origins."
 
 ---
 
@@ -47,34 +47,34 @@ each is "untrusted input became code" or "authority leaked across origins."
 
 ## Introduction
 
-You don't need to be a security engineer, but an SDE-2 must not *introduce* holes and must
-answer "how do you prevent XSS/CSRF." Both reduce to the two rules. The contacts app handles
-real user data and auth, so this matters in the job description's "ownership" sense.
+You don't need to be a security engineer. But an SDE-2 must not create security holes and must
+answer "how do you prevent XSS/CSRF." Both attacks come down to the two rules. The contacts app handles
+real user data and auth, so this matters for the job description's "ownership" requirements.
 
 ---
 
-## XSS — untrusted input becomes code
+## XSS: untrusted input becomes code
 
 ```js
 // ❌ classic XSS: a contact's name contains <img src=x onerror="steal(document.cookie)">
 element.innerHTML = contact.name;   // the browser parses it as HTML → runs the script
 ```
 
-If user-supplied data is inserted as **HTML**, embedded scripts run **in your origin** — they can
+If user-supplied data is inserted as **HTML**, embedded scripts run **in your origin**. They can
 read non-HttpOnly cookies, make authenticated requests, and impersonate the user.
 
-**Why React is XSS-safe by default:** JSX `{value}` is inserted as **text**, not HTML — React
-escapes `<`, `>`, `&`, etc. The data stays data. You only reopen the hole when you bypass it:
+**Why React is XSS-safe by default:** JSX `{value}` is inserted as **text**, not HTML. React
+escapes `<`, `>`, `&`, and other special characters. The data stays as data. You only reopen the hole when you bypass this protection:
 
 ```jsx
 <div>{contact.name}</div>                                   // ✅ escaped → safe
 <div dangerouslySetInnerHTML={{ __html: contact.bio }} />   // ⚠️ raw HTML → sanitize first!
 ```
 
-If you must render HTML (rich text), **sanitize** with a library (DOMPurify) to strip scripts —
-re-assert "data isn't code." Types of XSS: **stored** (malicious data saved server-side, served
-to others), **reflected** (echoed from the URL/query), **DOM-based** (client writes untrusted
-data into the DOM). Same root cause every time.
+If you must render HTML (rich text), **sanitize** with a library like DOMPurify to strip scripts.
+This re-asserts the rule that "data isn't code." Types of XSS: **stored** (malicious data saved server-side, served
+to others), **reflected** (echoed from the URL or query), **DOM-based** (client writes untrusted
+data into the DOM). Every type has the same root cause.
 
 ```mermaid
 flowchart LR
@@ -86,7 +86,7 @@ flowchart LR
 
 ---
 
-## CSRF — riding your credentials
+## CSRF: riding your credentials
 
 ```mermaid
 sequenceDiagram
@@ -98,39 +98,39 @@ sequenceDiagram
   Bk-->>E: transfer executes (server can't tell it wasn't the user)
 ```
 
-CSRF exploits that the browser **automatically sends cookies** for a site on *any* request to it,
-even one triggered by another site. The server sees a valid session cookie and complies.
+CSRF exploits the fact that the browser **automatically sends cookies** for a site on *any* request to it.
+This includes requests triggered by another site. The server sees a valid session cookie and processes the request.
 
-**Defenses (re-assert "authority only where intended"):**
-- **`SameSite` cookies** (`Lax` default, or `Strict`) — the browser won't send the cookie on
-  cross-site requests, killing most CSRF. This is the modern primary defense (Ch 13).
-- **CSRF tokens** — a per-session secret the server requires in the request body/header; evil.com
-  can't read it (same-origin policy), so it can't forge the request.
-- **Note:** token-in-header auth (JWT in `Authorization`) isn't auto-sent by the browser, so it's
-  not vulnerable to classic cookie-CSRF — but it *is* readable by XSS if stored in JS-accessible
-  storage. The two threats trade off:
+**Defenses (re-assert that authority only flows where intended):**
+- **`SameSite` cookies** (`Lax` default, or `Strict`). The browser won't send the cookie on
+  cross-site requests. This kills most CSRF. It is the modern primary defense (Ch 13).
+- **CSRF tokens** are a per-session secret the server requires in the request body or header. Evil.com
+  can't read the token (due to same-origin policy), so it can't forge the request.
+- **Note:** token-in-header auth (JWT in `Authorization`) isn't auto-sent by the browser. So it is
+  not vulnerable to classic cookie-CSRF. But it *is* readable by XSS if stored in JS-accessible
+  storage. The two threats trade off against each other:
 
 | Store token in… | XSS risk | CSRF risk |
 |---|---|---|
 | `localStorage` (JS reads, sent in header) | **exposed to XSS** | not cookie-CSRF prone |
 | `HttpOnly` cookie (JS can't read, auto-sent) | XSS-safe | **needs SameSite/CSRF token** |
 
-There's no perfect spot — pick based on your threat model. Common best practice: **HttpOnly +
-Secure + SameSite cookie** for the session/refresh token.
+There is no perfect spot. Pick based on your threat model. A common best practice is **HttpOnly +
+Secure + SameSite cookie** for the session or refresh token.
 
 ---
 
 ## CSP & other defenses
 
-- **Content-Security-Policy** (header): whitelists where scripts/styles/images may load from
-  (e.g. `script-src 'self'`). Defense-in-depth: even if XSS injects a script, CSP can block it
-  from executing or exfiltrating. Avoid `unsafe-inline`.
-- **`rel="noopener noreferrer"`** on `target="_blank"` links — without it the opened page can
-  control your tab via `window.opener` (reverse tabnabbing). Modern browsers default noopener.
-- **Clickjacking:** attacker iframes your site and tricks clicks. Defend with
-  `X-Frame-Options: DENY` / CSP `frame-ancestors`.
-- **Open redirects:** never redirect to a URL taken raw from a query param — validate against an
-  allowlist.
+- **Content-Security-Policy** (header): allows you to whitelist where scripts, styles, and images may load from
+  (for example `script-src 'self'`). This is defense-in-depth. Even if XSS injects a script tag, CSP can block it
+  from executing or sending data out. Avoid `unsafe-inline`.
+- **`rel="noopener noreferrer"`** on `target="_blank"` links. Without this, the opened page can
+  control your tab through `window.opener`. This attack is called reverse tabnabbing. Modern browsers default to noopener.
+- **Clickjacking:** an attacker puts your site in an iframe and tricks users into clicking. Defend with
+  `X-Frame-Options: DENY` or CSP `frame-ancestors`.
+- **Open redirects:** never redirect to a URL taken directly from a query parameter. Always validate against an
+  allowlist of allowed URLs.
 - **HTTPS everywhere** (+ HSTS) so tokens/cookies aren't sniffed.
 
 ---
@@ -138,34 +138,34 @@ Secure + SameSite cookie** for the session/refresh token.
 ## Interview Discussion (reason first)
 
 **Q1. "How does React prevent XSS, and when is it still vulnerable?"**
-> "JSX inserts values as text and escapes HTML metacharacters, so injected markup is shown, not
-> executed — data stays data. You reintroduce XSS with `dangerouslySetInnerHTML` (or direct
-> `innerHTML`); then you must sanitize (DOMPurify) and ideally add a CSP."
+> "JSX inserts values as text and escapes HTML metacharacters. So injected markup is shown, not
+> executed. Data stays as data. You reintroduce XSS with `dangerouslySetInnerHTML` (or direct
+> `innerHTML`). Then you must sanitize with DOMPurify and ideally add a CSP."
 
 **Q2. "What's CSRF and how do you stop it?"**
-> "An attacker's site triggers a request to a site you're logged into; the browser auto-attaches
-> your cookies, so the server thinks it's you. Stop it with `SameSite` cookies (browser won't send
-> them cross-site) and/or anti-CSRF tokens the attacker can't read. Header-based tokens aren't
-> auto-sent, so they sidestep cookie-CSRF — but they're XSS-readable if stored in JS."
+> "An attacker's site triggers a request to a site you are logged into. The browser auto-attaches
+> your cookies, so the server thinks it is you. Stop it with `SameSite` cookies. The browser won't send
+> them cross-site. Or use anti-CSRF tokens the attacker can't read. Header-based tokens aren't
+> auto-sent. So they sidestep cookie-CSRF. But they are XSS-readable if stored in JS."
 
 **Q3. "Where do you store an auth token?"**
-> "Tradeoff: localStorage is XSS-readable; HttpOnly cookies are XSS-safe but need SameSite/CSRF
-> protection. I prefer HttpOnly+Secure+SameSite cookies for session/refresh tokens, keep access
-> tokens short-lived, and harden against XSS (escaping, sanitize, CSP) since XSS defeats almost
+> "It is a tradeoff. localStorage is XSS-readable. HttpOnly cookies are XSS-safe but need SameSite and CSRF
+> protection. I prefer HttpOnly+Secure+SameSite cookies for session and refresh tokens. I keep access
+> tokens short-lived. I harden against XSS with escaping, sanitizing, and CSP. XSS defeats almost
 > any client storage."
 
 *Scoring:* full = data-isn't-code + origin-isolation + the XSS/CSRF storage tradeoff. Fail = "use
-JWT, it's secure."
+JWT, it is secure."
 
 ---
 
 ## Common Mistakes
 
-- **`dangerouslySetInnerHTML` without sanitizing** user/rich content → stored XSS.
-- **Assuming JWT/localStorage is automatically secure** — XSS reads it.
-- **No `SameSite` on session cookies** → CSRF exposure.
-- **Redirecting to a raw query-param URL** → open redirect/phishing.
-- **Trusting client-side validation/authorization** — the server must re-check everything.
+- **`dangerouslySetInnerHTML` without sanitizing** user or rich content. This leads to stored XSS.
+- **Assuming JWT/localStorage is automatically secure.** XSS can read it.
+- **No `SameSite` on session cookies.** This exposes you to CSRF.
+- **Redirecting to a raw query-param URL.** This creates an open redirect or phishing risk.
+- **Trusting client-side validation or authorization.** The server must re-check everything.
 
 ---
 
@@ -174,7 +174,7 @@ JWT, it's secure."
 1. Walk a stored-XSS through a contact's name field; how does React's text-escaping stop it, and
    how would `dangerouslySetInnerHTML` reopen it?
 2. Diagram CSRF; why does `SameSite=Lax` stop most of it?
-3. localStorage vs HttpOnly cookie for tokens — give the XSS/CSRF tradeoff table.
+3. localStorage vs HttpOnly cookie for tokens. Give the XSS and CSRF tradeoff table.
 4. What does CSP add if you already escape output? (defense-in-depth.)
 5. Why is `rel=noopener` needed on `target=_blank`?
 
@@ -191,16 +191,16 @@ JWT, it's secure."
 
 ## Summary
 
-- Two rules: **never trust input (data ≠ code)** and **never leak authority across origins**;
-  the browser enforces **origin isolation** and attacks break it.
-- **XSS** = untrusted input executed as code in your origin. **React escapes by default** (text,
-  not HTML); `dangerouslySetInnerHTML`/`innerHTML` reopen it → **sanitize + CSP**.
-- **CSRF** = attacker uses your auto-sent cookies from another site → defend with **SameSite
+- Two rules: **never trust input (data is not code)** and **never leak authority across origins**.
+  The browser enforces **origin isolation**. Attacks break that isolation.
+- **XSS** happens when untrusted input runs as code in your origin. **React escapes by default** (text,
+  not HTML). `dangerouslySetInnerHTML` or `innerHTML` reopen the hole. **Sanitize and add CSP**.
+- **CSRF** happens when an attacker uses your auto-sent cookies from another site. Defend with **SameSite
   cookies** and **anti-CSRF tokens**.
-- **Token storage** is a tradeoff: localStorage (XSS-readable) vs HttpOnly cookie (CSRF-prone);
-  prefer **HttpOnly+Secure+SameSite**, short-lived access tokens, and strong XSS defenses.
-- **CSP, noopener, frame-ancestors, HTTPS/HSTS, allowlisted redirects** are the supporting layers;
-  always re-validate on the server.
+- **Token storage** is a tradeoff. localStorage is XSS-readable. HttpOnly cookie is CSRF-prone.
+  Prefer **HttpOnly+Secure+SameSite**, short-lived access tokens, and strong XSS defenses.
+- **CSP, noopener, frame-ancestors, HTTPS/HSTS, allowlisted redirects** are the supporting layers.
+  Always re-validate on the server.
 
 ## Go deeper
 Ch 13 (cookies/CORS the headers live in). OWASP Top 10 is the canonical reference once the two

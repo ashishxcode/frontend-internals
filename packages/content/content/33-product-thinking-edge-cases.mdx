@@ -6,9 +6,9 @@ description: "Four states, double-submit, optimistic updates, offline"
 ---
 
 
-> Builds on Ch 08 (perf, loading states), Ch 10 (data fetching, retry), Ch 11 (architecture
-> tradeoffs), Ch 22 (error handling). The JD repeatedly says "think about edge cases, loading
-> states, micro-interactions, and accessibility" — this chapter turns that product instinct
+> Prerequisites: performance optimization (lazy loading, code splitting, React.memo, useMemo, useCallback), data fetching patterns (loading states, retry logic, stale-while-revalidate via TanStack Query), architecture tradeoffs (client vs server rendering, state management decisions), and error handling (try/catch, error boundaries, user-facing error messages, logging/reporting strategies).
+> The JD repeatedly says "think about special cases, loading
+> states, micro-interactions, and accessibility." This chapter turns that product instinct
 > into a repeatable framework.
 
 ---
@@ -18,12 +18,12 @@ description: "Four states, double-submit, optimistic updates, offline"
 > **Every user action has a lifecycle: INTENT → FLIGHT → RESULT. Product thinking means**
 > **designing for ALL three phases, not just the happy path. Intent is what the user sees**
 > **before acting (skeleton, placeholder). Flight is what happens during the action (loading,**
-> **optimistic UI, progress). Result is what the user sees after — success, error, or empty.**
-> **An SDE-2 doesn't just handle the happy path; they mentally simulate every state the UI**
+> **optimistic UI, progress). Result is what the user sees after: success, error, or empty.**
+> **An SDE-2 does not just handle the happy path. They mentally picture every state the UI**
 > **can be in and make sure each one is designed, not an afterthought.**
 
-From "intent → flight → result" you derive: the four states (loading, empty, error, data),
-optimistic updates for perceived speed, undo for error recovery, retry for transient failures,
+From "intent → flight → result" you learn: the four states (loading, empty, error, data),
+optimistic updates for perceived speed, undo for error recovery, retry for temporary failures,
 and skeleton screens over spinners.
 
 ---
@@ -31,7 +31,7 @@ and skeleton screens over spinners.
 ## Learning Objectives
 
 1. Apply the "intent → flight → result" framework to any UI action
-2. Design for all four states: loading, empty, error, data — with specific UI treatment
+2. Design for all four states: loading, empty, error, data. Each needs its own UI treatment
 3. Handle double-submit, rapid clicks, and race conditions
 4. Design for offline, slow network, and partial failures
 5. Implement undo, retry, and optimistic update patterns
@@ -46,7 +46,7 @@ and skeleton screens over spinners.
 - **Optimistic UI > loading spinner > nothing.** Show the user what they'll get before
   the server confirms. Revert gracefully on failure.
 - **Undo is better than confirmation.** Instead of "Are you sure?" show a toast with
-  "Deleted × Undo" — fewer clicks, recoverable mistakes.
+  "Deleted × Undo". Fewer clicks. Recoverable mistakes.
 - **Assume the network is unreliable.** Every request can fail, timeout, or return stale
   data. Design for retry, backoff, and stale-while-revalidate.
 - **Assume the user is fast.** They double-click, spam Enter, navigate before the page
@@ -54,7 +54,7 @@ and skeleton screens over spinners.
 
 ---
 
-## 1. The Four States — Deep Dive
+## 1. The Four States: Deep Dive
 
 Every component that displays data lives in exactly one of four states at any moment.
 
@@ -133,7 +133,7 @@ function ContactTableSkeleton() {
 |---|---|---|
 | No items yet | Illustration + message | CTA to create first |
 | No search results | "No results for X" | Clear filter button |
-| No notifications | Bell icon + "All caught up" | — |
+| No notifications | Bell icon + "All caught up" | None |
 | Empty after filter | "No items match your filters" | Reset filters |
 
 ```jsx
@@ -183,7 +183,7 @@ function ErrorState({ error, onRetry }) {
 
 ### Data state
 
-The happy path — but even here:
+The happy path, but even here:
 
 - **Partial data**: Show what loaded, indicate what's still loading
 - **Stale data**: Show cached data + subtle indicator that it's refreshing
@@ -307,7 +307,7 @@ useQuery({
 "Race conditions happen when async operations complete out of order. The fix is to ensure
 only the LATEST request can update state. AbortController is preferred because it actually
 cancels the network request instead of ignoring its response. TanStack Query handles this
-automatically — when the query key changes, the old request is cancelled and only the new
+automatically. When the query key changes, the old request is cancelled and only the new
 one updates the cache."
 
 ---
@@ -373,8 +373,8 @@ const mutation = useMutation({
 
 "Optimistic updates show the expected result immediately before the server confirms. If the
 server fails, we ROLL BACK to the previous state and show an error toast. This pattern makes
-the UI feel instant — the user sees the star fill immediately, and only notices if something
-goes wrong. TanStack Query's `onMutate`/`onError`/`onSettled` lifecycle makes this
+the UI feel instant. The user sees the star fill immediately and only notices if something
+goes wrong. TanStack Query's `onMutate`, `onError`, and `onSettled` lifecycle makes this
 structured and predictable."
 
 ---
@@ -471,8 +471,8 @@ function useUndo(action) {
 "Undo replaces confirmation dialogs for destructive actions. Instead of 'Are you sure?'
 (which trains users to click through without reading), we perform the action immediately
 and show a toast with an Undo button for 5 seconds. This is faster for the user and less
-disruptive. The undo action must be idempotent — if the user clicks Undo twice, the second
-click should be a no-op."
+disruptive. The undo action must be idempotent. If the user clicks Undo twice, the second
+click should do nothing."
 
 ---
 
@@ -504,7 +504,7 @@ useQuery({
 });
 ```
 
-### Error types — what to retry
+### Error types: what to retry
 
 | Error | Retry? | Strategy |
 |---|---|---|
@@ -580,46 +580,46 @@ Before shipping any feature, run this mental checklist:
 
 ### Input edge cases
 
-- [ ] Empty input — what happens when the user submits nothing?
-- [ ] Very long input — does it break the layout?
-- [ ] Special characters — XSS, SQL injection, unicode, emoji
-- [ ] Rapid input — keystroke-level speed, paste, autocorrect
+- [ ] Empty input: what happens when the user submits nothing?
+- [ ] Very long input: does it break the layout?
+- [ ] Special characters: XSS, SQL injection, unicode, emoji
+- [ ] Rapid input: keystroke-level speed, paste, autocorrect
 
 ### Network edge cases
 
-- [ ] Offline — what does the user see?
-- [ ] Slow network — loading state, no layout jump
-- [ ] Timeout — retry? error message? partial data?
-- [ ] Race condition — request 1 returns after request 2
-- [ ] Duplicate request — double-submit, double-mutation
+- [ ] Offline: what does the user see?
+- [ ] Slow network: loading state, no layout jump
+- [ ] Timeout: retry? error message? partial data?
+- [ ] Race condition: request 1 returns after request 2
+- [ ] Duplicate request: double-submit, double-mutation
 
 ### Data edge cases
 
-- [ ] Empty data — appropriate empty state with action
-- [ ] Single item — does the layout collapse?
-- [ ] Many items — virtualization, pagination
-- [ ] Very large values — truncation, overflow handling
-- [ ] Missing fields — null/undefined checks
+- [ ] Empty data: appropriate empty state with action
+- [ ] Single item: does the layout collapse?
+- [ ] Many items: virtualization, pagination
+- [ ] Very large values: truncation, overflow handling
+- [ ] Missing fields: null/undefined checks
 
 ### Interaction edge cases
 
-- [ ] Double-click — button disable, idempotency
-- [ ] Rapid scroll — lazy loading, virtual list
-- [ ] Tab away and back — refetch stale data
-- [ ] Browser back/forward — URL state, scroll position
-- [ ] Multiple tabs — stale data, conflict resolution
+- [ ] Double-click: button disable, idempotency
+- [ ] Rapid scroll: lazy loading, virtual list
+- [ ] Tab away and back: refetch stale data
+- [ ] Browser back/forward: URL state, scroll position
+- [ ] Multiple tabs: stale data, conflict resolution
 
 ### Accessibility edge cases
 
-- [ ] Screen reader — roles, aria labels, live regions
-- [ ] Keyboard only — all interactions via keyboard
-- [ ] Zoomed in (200%) — no horizontal scroll
-- [ ] Reduced motion — respect prefers-reduced-motion
-- [ ] High contrast — color not the only differentiator
+- [ ] Screen reader: roles, aria labels, live regions
+- [ ] Keyboard only: all interactions via keyboard
+- [ ] Zoomed in (200%): no horizontal scroll
+- [ ] Reduced motion: respect prefers-reduced-motion
+- [ ] High contrast: color not the only differentiator
 
 ---
 
-## 11. Real-World Example — a product company Contacts Page
+## 11. Real-World Example: a product company Contacts Page
 
 ### Prompt
 
@@ -662,9 +662,9 @@ Edge cases:
 
 ## Homework
 
-1. Audit a real app page for all four states (loading, empty, error, data) — which are missing?
+1. Audit a real app page for all four states (loading, empty, error, data). Which are missing?
 2. Add undo to a delete action in a feature you've built
 3. Add optimistic update to a toggle action (star, like, pin)
-4. Test an app with DevTools offline mode — what breaks?
+4. Test an app with DevTools offline mode. What breaks?
 5. Add race condition handling to a search component (AbortController)
 6. Write the product edge cases checklist for a "bulk email send" feature

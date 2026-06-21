@@ -287,29 +287,45 @@
 ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
 
 /* Mermaid diagrams */
+.mermaid-svg {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
 .mermaid-svg svg {
-  max-width: 100%;
   height: auto;
   font-family: var(--font-sans);
   display: block;
-  margin: 0 auto;
+  max-width: none;
 }
 
 .mermaid-svg .cluster-label span {
   font-family: var(--font-sans);
   font-weight: 600;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
 }
 
 .mermaid-svg .edgeLabel {
   font-family: var(--font-sans);
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: 12px;
+  color: var(--text-secondary);
   background-color: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 2px 6px;
+  padding: 3px 8px;
+}
+
+.mermaid-svg .node rect,
+.mermaid-svg .node circle,
+.mermaid-svg .node ellipse,
+.mermaid-svg .node polygon,
+.mermaid-svg .node path {
+  stroke-width: 2;
 }
 
 .mermaid-svg .label {

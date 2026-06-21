@@ -6,22 +6,21 @@ description: "Error boundaries, Suspense, error recovery patterns"
 ---
 
 
-> Builds on Ch 03/04 (render/commit), Ch 09 (state as discriminated union), Ch 10 (async state).
-> they ask "a release broke in production — what do you do?" — see the interview guide §4.
+> **Prerequisites:** understanding of React's render/commit work loop (it calls your component during the "render" step to build the element tree), modeling UI states as a discriminated union (loading | error | empty | data), and TanStack Query's pending/error/data conventions for async data.
 
 ---
 
 ## The one mental model
 
-> **An error is just another STATE your UI must render — not an exception to handle "somewhere
+> **An error is just another STATE your UI must render. It is not an exception to handle "somewhere
 > else." So the design question is always: at which BOUNDARY do I catch it, and what do I render
-> instead? Three boundaries cover everything: Error Boundaries catch errors thrown during RENDER
-> in a subtree; try/catch + query error state catch ASYNC errors (events, fetch); Suspense
+> instead? Three boundaries cover everything. Error Boundaries catch errors thrown during RENDER
+> in a subtree. try/catch + query error state catch ASYNC errors (events, fetch). Suspense
 > catches "not ready yet." Pick the boundary, design the fallback, keep the blast radius small.**
 
-From "error is a state, caught at a boundary" you derive why React needs Error Boundaries (you
+From "error is a state, caught at a boundary" you can see why React needs Error Boundaries (you
 can't try/catch a render), why they DON'T catch event/async errors, and how Suspense + error
-boundaries + normal render compose into pending/failed/ready.
+boundaries + normal render put together pending/failed/ready.
 
 ---
 
@@ -39,7 +38,7 @@ boundaries + normal render compose into pending/failed/ready.
 - **Error = a renderable state**, not just a thrown exception.
 - **Error Boundary** = a class component with `componentDidCatch`/`getDerivedStateFromError` that
   catches errors thrown *while rendering its subtree* and shows a fallback.
-- **Boundaries catch render-phase errors only** — not event handlers, not async, not SSR
+- **Boundaries catch render-phase errors only.** They do not catch event handlers, async, or SSR
   mismatches. Those you handle at the call site.
 - **Suspense** catches "pending" (a thrown promise); pair with an error boundary for "failed."
 
@@ -47,13 +46,13 @@ boundaries + normal render compose into pending/failed/ready.
 
 ## Introduction
 
-Robust UIs treat failure as a first-class state with a designed fallback, so one broken component
-doesn't blank the whole app. This is both a craft signal (the job description's "loading states, edge cases")
-and an incident-readiness signal (Interviewer's broken-release question).
+Strong UIs treat failure as a state with a designed fallback. That way one broken component
+doesn't blank the whole app. This shows both attention to detail (the job description's "loading states, edge cases")
+and incident readiness (Interviewer's broken-release question).
 
 ---
 
-## Problem — you can't try/catch a render
+## Problem: you can't try/catch a render
 
 ```jsx
 function Profile({ user }) {
@@ -61,10 +60,12 @@ function Profile({ user }) {
 }
 ```
 
-A throw during render isn't inside any try/catch you can write — React is calling your function
-(Ch 03). Pre-Error-Boundaries (React 15), one such throw corrupted React's internal tree and
-could blank the entire app. React's fix: a component that can **catch** errors from its subtree's
-render and swap in a fallback UI — the **Error Boundary** — containing the blast radius.
+A throw during render isn't inside any try/catch you can write. React calls your function during
+the render phase (the "render" step of the render/commit cycle, where it invokes component
+functions to build the element tree). Before Error Boundaries (React 15), one such throw corrupted
+React's internal tree and
+could blank the entire app. React's fix was a component that can **catch** errors from its subtree's
+render and swap in a fallback UI. That component is the **Error Boundary**. It contains the blast radius.
 
 ```mermaid
 flowchart TD
@@ -77,7 +78,7 @@ flowchart TD
 
 ---
 
-## Engine Simulation — what boundaries catch vs miss
+## Engine Simulation: what boundaries catch vs miss
 
 ```jsx
 class ErrorBoundary extends React.Component {
@@ -93,20 +94,20 @@ class ErrorBoundary extends React.Component {
 ```
 
 **Caught:** errors thrown during render / lifecycle / constructor of the subtree.
-**NOT caught** (and why): these don't happen during React's render pass —
-- **Event handlers** (`onClick`) — run later, on the call stack of an event (Ch 02). Use try/catch.
-- **Async** (`setTimeout`, `fetch().then`, `await`) — run in a later task/microtask (Ch 02). Use
+**NOT caught** (and why): these don't happen during React's render pass.
+- **Event handlers** (`onClick`). They run later, on the call stack of an event (Ch 02). Use try/catch.
+- **Async** (`setTimeout`, `fetch().then`, `await`). They run in a later task/microtask (Ch 02). Use
   try/catch or the query's error state (Ch 10).
 - **SSR/hydration** and errors in the boundary itself.
 
-So: **render errors → boundary; async/event errors → handle at the call site.** Two different
-mechanisms for two different execution contexts (the Ch 02 distinction pays off again).
+So: **render errors go to boundary. async/event errors get handled at the call site.** Two different
+ways it works for two different execution contexts (the Ch 02 distinction helps again).
 
 ---
 
-## Composing Suspense + boundary + the four states
+## Putting together Suspense + boundary + the four states
 
-Async data has four UI states — model them (Ch 09 discriminated union):
+Async data has four UI states. Model them (Ch 09 discriminated union):
 
 ```jsx
 // With TanStack Query (Ch 10): explicit states
@@ -125,8 +126,8 @@ return <List data={data}/>;
 </ErrorBoundary>
 ```
 
-Suspense lets a child "suspend" (throw a promise) while loading; the nearest `<Suspense>` shows
-the fallback until it resolves, and the nearest error boundary shows the error fallback if it
+Suspense lets a child "suspend" (throw a promise) while loading. The nearest `<Suspense>` shows
+the fallback until it resolves. The nearest error boundary shows the error fallback if it
 rejects. Pending/failed/ready become *boundaries in the tree* instead of branches in every
 component.
 
@@ -135,14 +136,14 @@ component.
 ## Production incident response (Interviewer's question)
 
 **Lead with mitigation, then diagnose** (Smeet jumped to Sentry; do this instead):
-1. **Mitigate now:** roll back the release / disable via feature flag to stop user impact
-   (a product company uses rolling releases — reverting is fast). Don't debug a live fire first.
+1. **Mitigate now:** roll back the release or disable via feature flag to stop user impact.
+   A product company uses rolling releases. Reverting is fast. Don't debug a live fire first.
 2. **Triage in Sentry:** the error, stack trace (source maps, Ch 20), release version, % users.
 3. **Reproduce locally** with the same env/inputs; confirm root cause.
 4. **Fix + guard:** add an error boundary / test so it can't silently recur; communicate status.
 5. **Postmortem:** why did CI/review miss it? add the check.
 
-Error boundaries + Sentry are *resilience* (graceful UI + visibility); rollback is *mitigation*.
+Error boundaries plus Sentry give *resilience* (graceful UI plus visibility). Rollback is *mitigation*.
 A senior names mitigation first.
 
 ---
@@ -150,15 +151,15 @@ A senior names mitigation first.
 ## Interview Discussion (reason first)
 
 **Q1. "Why does React need Error Boundaries?"**
-> "A throw during render isn't inside any try/catch I can write — React calls my component. Pre-
+> "A throw during render isn't inside any try/catch I can write. React calls my component. Before
 > boundaries, one render throw could blank the whole app. A boundary catches errors from its
-> subtree's render and shows a fallback, containing the blast radius."
+> subtree's render and shows a fallback. This contains the blast radius."
 
 **Q2. "Does an Error Boundary catch a fetch error in an onClick?"**
 > "No. Boundaries only catch render-phase errors. Event handlers and async run in later tasks
-> (Ch 02), outside the render pass — handle those with try/catch or the query's error state."
+> (Ch 02), outside the render pass. Handle those with try/catch or the query's error state."
 
-**Q3. "Production release broke — what do you do?"**
+**Q3. "Production release broke. What do you do?"**
 > "Mitigate first: roll back or feature-flag off to stop user impact. Then Sentry for the stack
 > trace and affected users, reproduce locally, fix with a guard/test, communicate, and postmortem
 > why it slipped through."
@@ -169,11 +170,11 @@ A senior names mitigation first.
 
 ## Common Mistakes
 
-- **Expecting boundaries to catch async/event errors** — they don't; handle at the call site.
-- **One top-level boundary only** → any error blanks everything; place boundaries around risky
+- **Expecting boundaries to catch async/event errors.** They don't. Handle these at the call site.
+- **One top-level boundary only** then any error blanks everything. Place boundaries around risky
   subtrees (a widget, a route) to contain blast radius.
-- **No fallback design** — a raw white screen instead of a retry/empty UI.
-- **Debugging production before mitigating** — users keep hitting the bug.
+- **No fallback design.** You get a white screen instead of a retry or empty UI.
+- **Debugging production before mitigating.** Users keep hitting the bug.
 - **Treating error/loading as afterthoughts** instead of modeled states (Ch 09).
 
 ---
@@ -190,8 +191,8 @@ A senior names mitigation first.
 
 ## Homework
 
-1. Build an Error Boundary; throw in a child's render (caught) and in its `onClick` (not caught) —
-   confirm the difference and add try/catch for the handler.
+1. Build an Error Boundary. Throw in a child's render (caught) and in its `onClick` (not caught).
+   Confirm the difference and add try/catch for the handler.
 2. Wrap a Suspense-enabled data component with both `<Suspense>` and an error boundary; force
    pending and error states.
 3. In `NOTES.md`: boundary-vs-async rule + the mitigate-first incident steps.
@@ -200,20 +201,20 @@ A senior names mitigation first.
 
 ## Summary
 
-- **An error is a renderable state**; design the fallback at a **boundary**.
+- **An error is a renderable state.** Design the fallback at a **boundary**.
 - **Error Boundaries** catch **render-phase** errors in their subtree (fallback UI, report via
-  `componentDidCatch`) — they do **NOT** catch **event/async** errors (later tasks, Ch 02), which
-  you handle at the call site or via query error state (Ch 10).
-- **Suspense** catches pending; pair with an error boundary so **pending/failed/ready** become
+  `componentDidCatch`). They do **NOT** catch **event/async** errors (later tasks, Ch 02).
+  You handle those at the call site or via query error state (Ch 10).
+- **Suspense** catches pending. Pair it with an error boundary so **pending/failed/ready** become
   boundaries in the tree, not branches everywhere. Always model the **four states** (Ch 09).
-- **Incident response: mitigate first** (rollback/feature-flag), then Sentry → reproduce → guard →
+- **Incident response: mitigate first** (rollback or feature-flag), then Sentry, then reproduce, guard,
   postmortem.
 
 ---
 
 # ═══ Internals Deep-Dive (source-verified) ═══
 
-> Verified against `facebook/react` (18.x/19.x) — `ReactFiberThrow.js`, `ReactFiberWorkLoop.js`.
+> Verified against `facebook/react` (18.x/19.x). See `ReactFiberThrow.js`, `ReactFiberWorkLoop.js`.
 > Suspense and error boundaries share the same throw/catch machinery in the work loop (Ch 04).
 
 ## A. Suspense: "suspending" is throwing a thenable (now a sentinel)
@@ -223,39 +224,39 @@ in try/catch; `throwException(root, returnFiber, sourceFiber, value, lanes)` ins
 value:
 - Historically you literally `throw promise` (`typeof value.then === 'function'`). React still
   supports it, classified as **`SuspendedOnDeprecatedThrowPromise`**.
-- **Modern `use()` does NOT throw a real promise** — it throws an internal sentinel
-  **`SuspenseException`**, and React recovers the actual thenable via `getSuspendedThenable()`.
+- **Modern `use()` does NOT throw a real promise.** It throws an internal sentinel
+  called **`SuspenseException`**. React recovers the actual thenable via `getSuspendedThenable()`.
   Source comment: *"the rest of the Suspense implementation expects the thrown value to be a
   thenable, because before `use` existed that was the (unstable) API for suspending."*
 
 ## B. The nearest boundary catches via a stack, not a tree walk
 
-React finds the enclosing boundary with `getSuspenseHandler()` (a maintained handler stack — *not*
-a parent traversal). It calls `markSuspenseBoundaryShouldCapture`, which sets the **`ShouldCapture`**
-flag; unwinding clears it and sets **`DidCapture`**; `completeWork` then re-renders the boundary
+React finds the enclosing boundary with `getSuspenseHandler()`. This uses a maintained handler stack, *not*
+a parent traversal. It calls `markSuspenseBoundaryShouldCapture`, which sets the **`ShouldCapture`**
+flag. Unwinding clears it and sets **`DidCapture`**. Then `completeWork` re-renders the boundary
 showing its **fallback**. A Suspense boundary is actually two fibers: a `SuspenseComponent`
 wrapping an `OffscreenComponent` (the primary children) plus a separate fallback fragment.
 
-This is the **same throw/catch mechanism error boundaries use** — an error boundary's
-`getDerivedStateFromError` sets state to render the fallback when a render throws an Error; Suspense
-does the equivalent when a render throws a thenable. Both are "render threw → nearest boundary shows
-fallback," which is exactly why neither catches **event/async** errors (those don't throw *during
-the render pass* — Ch 02 execution contexts).
+This is the **same throw/catch way it works that error boundaries use**. An error boundary's
+`getDerivedStateFromError` sets state to render the fallback when a render throws an Error. Suspense
+does the same when a render throws a thenable. Both follow "render threw, nearest boundary shows
+fallback." That is exactly why neither catches **event/async** errors. Those don't throw *during
+the render pass*. See Ch 02 execution contexts.
 
-## C. Retry on resolve — dedicated retry lanes
+## C. Retry on resolve with dedicated retry lanes
 
-`attachPingListener(root, wakeable, lanes)` (concurrent only — *"Legacy Suspense always commits
-fallbacks synchronously, so there are no pings"*) dedupes via `root.pingCache` and registers
-`wakeable.then(ping, ping)`. When the promise resolves, `ping` → `pingSuspendedRoot` →
-`markRootPinged`, and React re-renders on a **dedicated retry lane** (`claimNextRetryLane`, Ch 04).
-Fallback commits are throttled by `FALLBACK_THROTTLE_MS = 300` so fast resolves don't flash a
+`attachPingListener(root, wakeable, lanes)` (concurrent only. *"Legacy Suspense always commits
+fallbacks synchronously, so there are no pings"*). It dedupes via `root.pingCache` and registers
+`wakeable.then(ping, ping)`. When the promise resolves, `ping` goes to `pingSuspendedRoot` and
+`markRootPinged`. Then React re-renders on a **dedicated retry lane** (`claimNextRetryLane`, Ch 04).
+Fallback commits are throttled by `FALLBACK_THROTTLE_MS = 300`. This way fast resolves don't flash a
 fallback.
 
 ## D. Transitions hide fallbacks (react.dev/Suspense)
 
 If a boundary already shows content and then re-suspends, the fallback reappears **unless** the
-update was wrapped in `startTransition`/`useDeferredValue` (Ch 04 lanes) — a Transition "only waits
-long enough to avoid hiding already revealed content," keeping the stale UI with `isPending` for a
+update was wrapped in `startTransition` or `useDeferredValue` (Ch 04 lanes). A Transition "only waits
+long enough to avoid hiding already revealed content." It keeps the stale UI with `isPending` for a
 busy indicator instead of yanking it back to a spinner.
 
 ## Go deeper
@@ -263,4 +264,4 @@ Source: `facebook/react` `ReactFiberThrow.js` (throwException, attachPingListene
 markSuspenseBoundaryShouldCapture), `ReactFiberWorkLoop.js` (handleThrow, FALLBACK_THROTTLE_MS).
 Ch 04 (lanes/work loop the catch runs in), Ch 02 (why async errors escape), Ch 10 (query
 error/loading states), Ch 20 (source maps for Sentry). Note: `SuspenseList` is still
-`unstable_`-only in 18 and 19 — not stable API.
+`unstable_`-only in 18 and 19. It is not a stable API.

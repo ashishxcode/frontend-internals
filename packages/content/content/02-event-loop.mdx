@@ -5,24 +5,47 @@ part: "JavaScript Runtime"
 description: "Event loop, microtasks, macrotasks, async/await, Promises"
 ---
 
+## Problem
 
-> Builds directly on Ch 01 (call stack / heap). The stack only does synchronous work; this
-> chapter adds *how JavaScript does anything that takes time* without a second thread.
+You are building a CRM dashboard. When a sales rep opens an account page, you need to:
 
----
+1. Fetch account details from `/api/accounts/42`
+2. Fetch the contact list from `/api/accounts/42/contacts`
+3. Fetch the deal pipeline from `/api/accounts/42/deals`
+4. Render all three on screen
 
-## The one mental model
+Each request takes 200-400ms. If JavaScript blocked the thread for each one, the page would freeze for over a second. No scrolling. No clicking. No animated loading spinners. The browser would show the "page unresponsive" dialog.
 
-> **JavaScript runs on ONE thread with ONE call stack. It cannot "wait" for anything. So slow
-> things (timers, network, DOM events) are handed to the host (browser), which later drops a
-> callback into a queue. The event loop has exactly one job: when the call stack is EMPTY, take
-> the next callback and run it. There are two queues — microtasks (Promises) and macrotasks
-> (timers, events) — and the rule is: after each macrotask, drain ALL microtasks before the
-> next macrotask or a repaint.**
+This is the fundamental problem: **JavaScript has one thread and one call stack. How do you wait for slow operations (network, timers, user input) without freezing the entire page?**
 
-From this single picture you derive every async-ordering puzzle: why `Promise.then` runs before
-`setTimeout(…, 0)`, why a `while(true)` freezes the tab, why `await` "pauses" without blocking,
-and why a heavy loop blocks rendering. No memorizing output orders — you simulate the queues.
+```js
+// What you WISH you could write (but would freeze the tab):
+const account = fetchFromNetwork('/api/accounts/42'); // blocks 300ms
+const contacts = fetchFromNetwork('/api/accounts/42/contacts'); // blocks 200ms
+render(account, contacts);
+```
+
+## Why Existing Solution Failed
+
+Before JavaScript needed to run in a browser, languages handled I/O in two ways, both wrong for a UI thread.
+
+**Synchronous blocking** (C, Java, Python default): A `read()` or `recv()` call blocks the thread until data arrives. The operating system context-switches to another thread. But browsers give each tab one UI thread. Blocking it freezes the entire tab. The user cannot scroll, click, or type.
+
+**Thread-per-request** (Java servlets, C# servers): Each connection spawns a new thread. The OS handles blocking by switching between threads. But threads are expensive. Each one needs megabytes of stack space. A browser tab with 100 open network requests would crash on thread overhead alone. And threads introduce race conditions, deadlocks, and complexity that makes UI programming error-prone.
+
+**The old web was static.** Before JavaScript, clicking a link reloaded the entire page. There was no interactivity. The browser was a document viewer, not an application platform.
+
+JavaScript needed a third way: **single thread, cooperative scheduling, non-blocking I/O.** The language would never wait. The *host* (browser) would do the waiting on its own threads. When the host finished, it would drop a callback into a queue. The single thread would pick it up when it was free. This is the event loop.
+
+The insight: instead of making the developer manage threads, the runtime manages a queue of work. The developer writes callbacks. The runtime decides when to run them. No locks. No race conditions. One thread, one stack, one queue at a time.
+
+## Mental Model
+
+JavaScript runs on ONE thread with ONE call stack. It cannot "wait" for anything. Slow operations (timers, network, DOM events) are handed to the browser host. The host has its own threads for timing and networking. When the host finishes, it drops a callback into a queue. The event loop has exactly one job: when the call stack is EMPTY, take the next callback and run it. There are two queues: microtasks (Promises) and macrotasks (timers, events). After each macrotask, drain ALL microtasks before the next macrotask or a repaint.
+
+**"Empty the stack, drain the micros, run one macro, repeat."**
+
+## Visualization
 
 ```mermaid
 flowchart LR
@@ -55,76 +78,6 @@ flowchart LR
   Macro -- "run on stack" --> Stack
 ```
 
----
-
-## Learning Objectives
-
-1. Explain why a single-threaded language needs an event loop at all.
-2. Predict the output of mixed `setTimeout` / `Promise.then` / sync code by simulating queues.
-3. Explain `async/await` as syntax over the microtask queue (not a new threading model).
-4. Connect "long synchronous task = frozen UI" to React's need for Fiber (Ch 04).
-
----
-
-## Key Mental Models
-
-- **One stack, one thread.** Only one thing runs at a time. "Async" ≠ parallel.
-- **The host does the waiting**, not JS. Web APIs (timer, fetch) run outside the stack and
-  enqueue a callback when done.
-- **Loop rule:** run a task → empty the stack → **drain all microtasks** → (maybe paint) →
-  next task.
-- **Microtasks (Promises, queueMicrotask) jump the queue** ahead of macrotasks (timers, events).
-
----
-
-## Introduction
-
-You write `fetch(...).then(...)` and `setTimeout(...)` daily. This chapter is the model that
-lets you *predict* what runs when — the single most common JS interview puzzle ("what does this
-log?"). It's also the foundation for React's scheduler: once you see that a long synchronous
-function blocks the one thread (no paint, no clicks), Fiber's "break work into yieldable units"
-(Ch 04) becomes obvious instead of mysterious.
-
----
-
-## Problem
-
-The call stack (Ch 01) runs functions to completion, one at a time. So what happens here?
-
-```js
-const data = fetchFromNetwork();   // takes 200ms
-console.log(data);
-```
-
-If JS literally waited 200ms on the stack, the **entire page** would freeze — no scrolling, no
-clicks, no painting — because there's one thread and the stack is busy. Unacceptable. The
-language designers' problem: *let slow operations happen without blocking the one thread.*
-
-Their solution: don't block. Hand the slow work to the host (the browser has other threads for
-timers/network), keep running synchronous code, and when the slow work finishes, the host puts a
-**callback** into a queue. A loop picks it up *later*, once the stack is free. That's the event
-loop — the same "queue it, drain when free" instinct that React's batching (Ch 03) reuses.
-
----
-
-## Mental Model
-
-```
-   ┌─────────────┐     web APIs run OFF the stack (host threads):
-   │  CALL STACK │     setTimeout timer, fetch, DOM events, etc.
-   │  (one!)     │                       │ when done, enqueue callback
-   └──────┬──────┘                       ▼
-          │ empty?            ┌────────────────────────┐
-          │                   │  MACROTASK queue        │  (timers, I/O, events)
-   ┌──────▼───────┐           │  [ cb , cb , ... ]      │
-   │  EVENT LOOP  │◀──────────┴────────────────────────┘
-   │  while true: │           ┌────────────────────────┐
-   │   if stack   │◀──────────│  MICROTASK queue        │  (Promise.then, await,
-   │   empty →    │  DRAIN    │  [ cb , cb , ... ]      │   queueMicrotask)
-   │   run tasks  │  FULLY    └────────────────────────┘
-   └──────────────┘
-```
-
 ```mermaid
 flowchart TD
   start[stack empty] --> macro{macrotask waiting?}
@@ -135,12 +88,9 @@ flowchart TD
   macro -->|no| idle[wait for host to enqueue]
 ```
 
-**The asymmetry is the whole exam:** one macrotask per loop turn, but *all* microtasks drain
-before the next macrotask. So Promises always beat timers queued at the same moment.
+## Engine Simulation
 
----
-
-## Engine Simulation — the classic ordering puzzle
+Run this in your head. Do not look at the answer yet.
 
 ```js
 console.log("1");
@@ -149,40 +99,94 @@ Promise.resolve().then(() => console.log("3"));
 console.log("4");
 ```
 
-Simulate. Sync code runs first (it's on the stack). The timer callback goes to the **macrotask**
-queue; the `.then` goes to the **microtask** queue.
+**Step-by-step simulation:**
 
 ```
-stack runs synchronously:
-  log("1")          → prints 1
-  setTimeout(...,0) → host schedules timer; cb → MACROTASK queue
-  Promise.then(...) → cb → MICROTASK queue
-  log("4")          → prints 4
-stack now EMPTY → event loop:
-  drain ALL microtasks first:  run cb → prints 3
-  microtasks empty → take one macrotask: run cb → prints 2
+Call stack starts empty. Execute script.
+
+Step 1: console.log("1")
+  Stack: [ log("1") ]
+  Output: "1"
+  Stack empties.
+
+Step 2: setTimeout(() => console.log("2"), 0)
+  Stack: [ setTimeout(...) ]
+  The host starts a 0ms timer on a browser thread.
+  The timer callback is enqueued as a MACROTASK.
+  Macrotask queue: [ () => log("2") ]
+  Stack empties.
+
+Step 3: Promise.resolve().then(() => console.log("3"))
+  Stack: [ .then(...) ]
+  Promise.resolve() creates a fulfilled promise.
+  .then() schedules the callback as a JOB (microtask).
+  Microtask queue: [ () => log("3") ]
+  Stack empties.
+
+Step 4: console.log("4")
+  Stack: [ log("4") ]
+  Output: "4"
+  Stack empties.
+
+--- Call stack is EMPTY. Event loop takes over ---
+
+Step 5: Drain microtask queue (ALL of them)
+  Microtask queue has [ () => log("3") ]
+  Dequeue and run: console.log("3")
+  Output: "3"
+  Microtask queue empty.
+
+Step 6: Take one macrotask
+  Macrotask queue has [ () => log("2") ]
+  Dequeue and run: console.log("2")
+  Output: "2"
+
+Final output: 1, 4, 3, 2
 ```
 
-Output: **1, 4, 3, 2.** Not 1,4,2,3. The `setTimeout(…, 0)` is *not* "run now" — it's "run on a
-future loop turn, after all microtasks." Derive it; never memorize the order.
+**Why this order matters:** The timer was coded BEFORE the Promise.then. But the Promise.then callback runs first. Because they go into different queues, and microtasks drain before the next macrotask. You cannot determine order by reading code top-to-bottom. You must simulate the queues.
 
-### `await` is microtask sugar
+### Await simulation
 
 ```js
 async function f() {
   console.log("A");
-  await null;             // pause point
-  console.log("B");       // everything after await = a microtask
+  await null;
+  console.log("B");
 }
 f();
 console.log("C");
 ```
 
-`await` runs synchronously up to the `await`, then **schedules the rest of the function as a
-microtask** and returns control. So: `A` (sync), `C` (sync, caller continues), then the
-microtask resumes → `B`. Output: **A, C, B.** `await` doesn't block the thread — it splits the
-function at the `await` and queues the continuation. It's the Ch 01 closure that remembers where
-to resume.
+**Step-by-step:**
+
+```
+Step 1: Call f()
+  Stack: [ f() ]
+  Run synchronously up to the await.
+
+Step 2: console.log("A")
+  Output: "A"
+
+Step 3: await null
+  await wraps null in Promise.resolve(null).
+  It calls PerformPromiseThen on that promise.
+  The rest of the function (console.log("B")) is scheduled as a microtask.
+  f() suspends and returns control to the caller.
+  Microtask queue: [ resume f, log("B") ]
+  Stack empties.
+
+Step 4: Back in caller
+  console.log("C")
+  Output: "C"
+  Stack empties.
+
+Step 5: Event loop drains microtasks
+  Resume f(). Run console.log("B").
+  Output: "B"
+
+Final output: A, C, B
+```
 
 ```mermaid
 sequenceDiagram
@@ -195,194 +199,266 @@ sequenceDiagram
   Micro->>Stack: resume f: log B
 ```
 
----
+**What await does internally:** It splits the function at the await point. Everything before runs synchronously. Everything after runs as a microtask. The closure (Chapter 01) stores the execution context so the function resumes exactly where it paused. No threads. No blocking. Just queue manipulation.
 
-## Why a heavy loop freezes the tab (and needs Fiber)
+## Internal Implementation
 
-```js
-for (let i = 0; i < 5e9; i++) {}   // 3 seconds of synchronous work
+The HTML spec defines the event loop processing model. Here is the pseudo code.
+
+### Event loop main loop
+
+```
+while (eventLoop.isRunning) {
+  // 1. Select the oldest runnable task from any task queue
+  task = selectOldestRunnableTask(taskQueues)
+  if (task) {
+    run(task)
+    task = null
+  }
+
+  // 2. Perform a microtask checkpoint
+  performMicrotaskCheckpoint()
+
+  // 3. Update rendering (only at display refresh rate)
+  if (isRenderingOpportunity()) {
+    updateRendering()
+  }
+}
 ```
 
-While this runs, the stack is never empty, so the event loop never gets a turn — no clicks, no
-microtasks, **no repaint**. The tab is frozen for 3s. This is *exactly* the problem React's
-Fiber (Ch 04) solves for large renders: a long synchronous task starves the loop. The cures are
-the same family — break work into chunks and yield (`setTimeout`/`scheduler`/`requestIdleCallback`),
-or move it off-thread (Web Workers, Ch 17).
+### Microtask checkpoint
 
----
+```
+function performMicrotaskCheckpoint() {
+  // Re-entrancy guard: prevents recursive checkpoints.
+  // If a microtask triggers an operation that starts another checkpoint,
+  // the nested call returns immediately.
+  if (isPerformingMicrotaskCheckpoint) return
+  isPerformingMicrotaskCheckpoint = true
 
-## Interview Discussion (reason first)
+  while (microtaskQueue is not empty) {
+    task = microtaskQueue.dequeue()
+    run(task)
+    // Microtask can queue MORE microtasks. The while loop keeps going.
+  }
 
-**Q1. "`setTimeout(fn, 0)` — does `fn` run immediately?"**
+  isPerformingMicrotaskCheckpoint = false
+}
+```
 
-*Plausible-but-wrong:* "Yes, after 0ms it runs right away."
+This is why an infinite Promise.then chain starves macrotasks. The while loop never exits. User events and paint frames never get a turn.
 
-*Correction:* No. It's queued as a **macrotask** and runs only when the stack is empty *and*
-all microtasks have drained — and never before the 0ms minimum, which is also clamped (~4ms for
-nested timers). Synchronous code and all pending Promises run first.
+### Promise.then internals
 
-*Model answer:* "It schedules a macrotask for a future loop turn. Sync code finishes, the entire
-microtask queue drains, then the timer callback runs. `0` is a minimum delay, not 'now'."
+```
+function then(onFulfilled, onRejected) {
+  // .then always returns a new promise for chaining
+  const resultPromise = new Promise()
 
-**Q2. "Why does `Promise.then` run before `setTimeout(…,0)`?"**
+  if (this.state === PENDING) {
+    // Store handlers. They run when the promise settles.
+    this.fulfillReactions.push({
+      capability: resultPromise,
+      handler: onFulfilled
+    })
+  } else {
+    // Promise already settled. Enqueue a microtask now.
+    const job = createPromiseReactionJob(this, onFulfilled, resultPromise)
+    hostEnqueuePromiseJob(job)  // queues a microtask
+  }
 
-*Model answer:* "`.then` is a microtask; the loop drains *all* microtasks after each macrotask
-and before the next one. The timer is a macrotask waiting behind that drain. So microtasks win."
+  return resultPromise
+}
+```
 
-**Q3. "Is `async/await` multithreaded?"**
+### Await desugaring
 
-*Model answer:* "No. One thread. `await` runs synchronously to the pause point, schedules the
-rest of the function as a microtask, and yields. The 'waiting' is the host doing the slow work
-off-thread; the JS continuation is just a queued microtask."
+```
+async function f() {
+  await value
+  // rest of function
+}
 
-*Scoring:* full = two queues + drain-all-micro rule + await-as-continuation. Fail = "async is
-parallel / runs on another thread."
+// Is internally:
+function f() {
+  const promise = Promise.resolve(value)
+  const resume = (v) => { /* resume execution with value v */ }
+  const throwIn = (e) => { /* throw exception into the function */ }
+  promise.then(resume, throwIn)
+  // suspend and return to caller
+}
+```
 
----
+Every `await` costs at least one microtask tick. Even `await null` goes through `Promise.resolve()` which schedules a .then() microtask.
+
+### Task queues are sets, not FIFO
+
+The HTML spec says task queues are **sets**, not queues. The event loop can pick the first *runnable* task from any **task source** (timer, DOM manipulation, user interaction, networking, navigation). This lets the browser prioritize: a user click task can jump ahead of a timer callback. But the microtask queue is a true FIFO. Strict ordering there.
+
+## Real World Example
+
+**CRM dashboard data loading.** A sales rep opens an account page. The app fires three fetches in parallel:
+
+```js
+async function loadAccountPage(accountId) {
+  const [account, contacts, deals] = await Promise.all([
+    fetch(`/api/accounts/${accountId}`),
+    fetch(`/api/accounts/${accountId}/contacts`),
+    fetch(`/api/accounts/${accountId}/deals`),
+  ]);
+  render({ account, contacts, deals });
+}
+```
+
+Here is what the event loop does:
+
+1. Three `fetch()` calls hand network work to the browser's networking threads. Each returns a Promise immediately. The Promises are pending.
+
+2. `await Promise.all(...)` suspends the function. The microtask queue is empty. The event loop continues processing macrotasks: user clicks, scroll events, paint frames.
+
+3. Network responses arrive in any order. Each response triggers a microtask that resolves one Promise. `Promise.all` tracks all three. When the last one resolves, it queues a microtask to resume the async function.
+
+4. The resumed microtask calls `render()`. This runs synchronously to completion. If rendering takes more than 16ms, the next paint frame is delayed.
+
+**Search-as-you-type with debounce.** A search input fires a request on every keystroke. Debounce with setTimeout:
+
+```js
+let debounceTimer;
+input.addEventListener('input', (e) => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    fetch(`/api/search?q=${e.target.value}`).then(renderResults);
+  }, 300);
+});
+```
+
+The timer callback is a macrotask. If a Promise.then from a previous search is still in the microtask queue, the timer waits. Debounced searches are never starved by microtask-heavy operations.
+
+**Infinite scroll feed (LinkedIn, Twitter).** When the user scrolls near the bottom, the app fetches the next page. The fetch response handler (microtask) appends items to the DOM. Layout calculation runs on the next render frame. This interleaving of microtask (data processing) and macrotask (scroll event) keeps the feed smooth.
+
+## Tradeoffs
+
+### Advantages
+
+**Non-blocking by default.** No thread pools, no locks, no race conditions from shared memory. Every async operation returns control to the stack immediately.
+
+**Cooperative scheduling.** The developer decides priority by choosing microtask vs macrotask. Promise callbacks (microtasks) always run before timers (macrotasks). This enables predictable ordering.
+
+**Single-threaded simplicity.** No context switching overhead. No mutexes. The call stack is deterministic (Chapter 01). JavaScript is predictable for UI programming.
+
+### Disadvantages
+
+**CPU-bound work still blocks.** A 500ms synchronous computation freezes the thread. The event loop cannot interleave it. The only fixes are chunking with setTimeout or moving to Web Workers (Chapter 17).
+
+**Microtask storms starve macrotasks.** An infinite Promise.then chain fills the microtask queue faster than the event loop can drain it. Macrotasks (user events, paint frames) never get a turn. The page freezes even though each microtask is tiny.
+
+**Error handling complexity.** Async errors need try/catch around await or .catch() on promises. An unhandled promise rejection silently disappears in older runtimes. Source maps for async stack traces are still imperfect.
+
+**Not truly parallel.** Two CPU-heavy async functions share the same thread. They interleave at await points but never run simultaneously. This is cooperative multitasking, not parallelism.
+
+### Developer Experience
+
+The two-queue model with different drain rules is the hardest mental leap for new engineers. Senior engineers simulate the queues instinctively. The magic of `await` (looks synchronous but is not) is both the best and worst thing for DX: easy to write, confusing to debug when interleaving surprises happen.
 
 ## Common Mistakes
 
-- **Thinking `setTimeout(0)` is immediate** or that timers are precise (clamped + queued).
-- **Assuming async = parallel.** It's interleaving on one thread.
-- **A microtask that schedules a microtask that schedules…** can starve macrotasks/rendering
-  (infinite microtask loop freezes paint just like a `while(true)`).
-- **Blocking the thread with heavy compute** and wondering why the spinner doesn't spin — the
-  spinner can't paint while the stack is busy (Ch 07).
-- **Mixing up `process.nextTick`/queueMicrotask vs setImmediate** (Node has extra queues) — for
-  the browser, the model above suffices.
+**"setTimeout(0) runs immediately."** Wrong. It schedules a macrotask. The callback runs only when the stack is empty AND all microtasks have drained. The 0ms delay is also clamped to 4ms for nested timers.
 
----
+**"async/await is multithreaded."** Wrong. One thread. await is syntactic sugar over Promise.then. The function splits at the await point. The continuation is a microtask on the same thread.
 
-## Interview Questions
+**"Code order determines execution order."** Wrong for async. You cannot read a mix of setTimeout and Promise.then top-to-bottom and know the output. You must simulate the queues.
 
-1. Predict the output: a mix of two `setTimeout`s, two `Promise.then`s, and sync logs. Simulate
-   both queues to justify.
-2. Explain `await` purely in terms of the microtask queue and Ch 01 closures.
-3. Why can an infinite chain of microtasks freeze the page even though each is tiny?
-4. You have a 200ms computation that janks the UI. Give two thread-friendly fixes and tie them
-   to "the stack must be empty for the loop to run."
-5. How does this chapter explain *why* React needed Fiber?
+**"A microtask runs immediately."** Not exactly. A microtask runs when the stack empties and a microtask checkpoint fires. If the stack is deep in recursion, microtasks queue up but do not run until the stack unwinds.
 
----
+**"Microtasks are faster than macrotasks."** Misleading. Both are function calls on the same thread. Microtasks get higher priority (they drain first), but they do not run on a separate fast path.
 
-## Homework
+**"Promise.resolve().then() runs in the same tick."** Incorrect. .then() always enqueues a microtask. Even on an already-fulfilled promise, the callback defers to the microtask queue.
 
-1. Write the 1-4-3-2 puzzle, predict before running, then add an `async/await` and a nested
-   `setTimeout` and re-predict. Confirm by running.
-2. Build a button that, on click, runs a 2-second `for` loop; observe the UI freeze. Then chunk
-   the work with `setTimeout` per chunk and watch responsiveness return.
-3. In `NOTES.md`, write the loop rule in one line ("empty stack → drain all micro → one macro →
-   repeat") — you'll reuse it for React batching and rendering.
+**"async functions run in parallel."** No. async functions yield at await points. Between awaits, they run synchronously. Two async functions interleave but never run simultaneously.
 
----
+## SDE-2 Interview Answer
 
-## Summary
+### Mid-level
 
-- **One thread, one stack.** JS never waits; the **host** does slow work off-thread and enqueues
-  a callback.
-- The **event loop** runs the next queued callback only when the stack is empty.
-- **Two queues:** microtasks (Promises/`await`/`queueMicrotask`) and macrotasks (timers/events).
-  After each macrotask, **all** microtasks drain before the next macrotask or a repaint — so
-  Promises beat `setTimeout(0)`.
-- **`async/await`** is microtask sugar: run to the `await`, queue the continuation, yield.
-- **Long synchronous work starves the loop** → frozen UI. That's the exact problem React's Fiber
-  (Ch 04) and Web Workers (Ch 17) address.
+"The event loop is how JavaScript handles asynchronous operations on a single thread. When you call setTimeout or fetch, the browser takes over the waiting. When the operation finishes, the callback goes into a queue. The event loop checks if the call stack is empty. If it is, it takes the next callback and runs it.
 
----
+There are two queues. Microtasks are for Promises and async/await continuations. Macrotasks are for timers and DOM events. The rule is: after one macrotask, the event loop drains the entire microtask queue before the next macrotask. This is why Promise.then runs before setTimeout with zero delay.
 
-# ═══ Internals Deep-Dive (source-verified) ═══
+Async/await is syntactic sugar. Await wraps the value in a Promise and schedules the rest of the function as a microtask. The function yields control back to the caller. When the microtask runs, the function resumes from where it paused. No threads involved."
 
-> Verified against the HTML Standard (html.spec.whatwg.org §8.1.7 Event loops) and ECMA-262
-> (tc39.es/ecma262 §27 Promises, §9.5 Jobs). The model above is the spec, simplified; here are
-> the exact algorithms and names.
+### Senior
 
-## A. The HTML event loop, precisely
+"When I design APIs that need scheduling guarantees, I think about the event loop as a priority system with two levels.
 
-The chapter said "two queues." The spec is sharper:
+Microtasks are high priority. Promise reactions, queueMicrotask, and async function continuations go here. They drain completely after each macrotask. A Promise.then chain always completes before the next setTimeout fires, even if both were scheduled at the same clock time.
 
-- An event loop has **zero or more *task queues*** — and each task queue is a **set, not a FIFO**
-  ("task queues are sets, not queues"), so the loop can pick the first *runnable* task of any
-  **task source**. Sources include the **timer**, **DOM manipulation**, **user interaction**,
-  **networking**, and **navigation** task sources — grouped so the agent can prioritize per source.
-- An event loop has **exactly one *microtask queue*** — and *that* one is a true FIFO.
+Macrotasks are normal priority. setTimeout, setInterval, I/O callbacks, and DOM event handlers go here. The event loop picks exactly one per turn.
 
-**Processing model** (§8.1.7.3), the verified cycle:
-1. **Select a task** from a task queue with a runnable task; remove it.
-2. **Run** it to completion.
-3. **Perform a microtask checkpoint.**
-4. **Update the rendering** — *only at a rendering opportunity* (tied to display refresh).
-5. Repeat.
+The key production insight: a microtask storm can starve macrotasks. An infinite Promise.then chain keeps the microtask checkpoint running forever. User events never fire. Paint never happens. I have debugged this in production React apps where state updates in useEffect callbacks create a microtask feedback loop.
 
-**"Perform a microtask checkpoint"** (§8.1.7.3.1) is the real algorithm name. It has a re-entrancy
-flag, then **`while` the microtask queue is not empty**: dequeue and run the oldest microtask —
-*including microtasks queued during the checkpoint*. So the queue is **fully drained** before
-rendering or the next task. This is the spec-exact reason behind Ch-02's "drain ALL microtasks"
-rule, and why an unbounded microtask chain starves rendering.
+For CPU-heavy work, I chunk with setTimeout slices or use Web Workers. A long synchronous function blocks everything: microtasks, macrotasks, rendering. The event loop only runs when the stack is empty.
 
-## B. Promises, spec-level (ECMA-262 §27.2)
+When reviewing code, I flag patterns that misuse the two queues. Using setTimeout(fn, 0) when queueMicrotask would be more appropriate, or vice versa. The choice depends on whether you need to yield to the render cycle."
 
-A Promise instance has internal slots: **`[[PromiseState]]`** (`pending`/`fulfilled`/`rejected`),
-**`[[PromiseResult]]`**, **`[[PromiseFulfillReactions]]`**, **`[[PromiseRejectReactions]]`**,
-**`[[PromiseIsHandled]]`**.
+### Engineering Lead
 
-- **`.then`** runs **PerformPromiseThen**: it builds **PromiseReaction Records** (fields
-  `[[Capability]]`, `[[Type]]` = Fulfill/Reject, `[[Handler]]`). If the promise is still
-  **pending**, the reactions are *stored* in the reaction lists. If already **settled**, a
-  **job** is enqueued immediately via **HostEnqueuePromiseJob**.
-- When a pending promise settles, **TriggerPromiseReactions** enqueues a job per stored reaction.
-- `.then` returns the result capability's promise → that's what makes chains work, one
-  **PromiseReactionJob** (one microtask) per link.
-- **Resolving with a thenable** doesn't settle immediately: it schedules
-  **NewPromiseResolveThenableJob** — an *extra* microtask tick — to adopt the thenable's state.
-  (That's why `Promise.resolve(aPromise)` costs an extra tick.)
+"The event loop is the execution model for the entire platform. Choosing the wrong queue has system-level consequences.
 
-**The bridge between spec and browser:** ECMA-262 defines abstract **Jobs**; the host hook
-**HostEnqueuePromiseJob(job)** must run them **FIFO**. In a browser, the HTML spec implements that
-hook by **queuing a microtask**. So "Promise job" (ECMA-262) and "microtask" (HTML) are the same
-thing — that's *why* `.then` callbacks are microtasks.
+In my teams, I enforce a simple contract for async code. Network responses and user events go through macrotasks naturally. Business logic that processes those responses goes through microtasks via async/await. Heavy computation never runs on the main thread. We audit long tasks with the Performance Observer API and refactor anything over 50ms.
 
-## C. `await` = PromiseResolve + PerformPromiseThen (§27.7.5.3)
+The architecture principle: the event loop is the scheduler. Treat it with the same respect as a database query planner or an OS process scheduler. A single long task at the wrong moment degrades user experience across the entire application, not just the current view.
 
-An async function is a **resumable coroutine**: its execution context's "code evaluation state" is
-saved on suspend and restored on resume (generator machinery). The **Await(value)** operation:
-1. `promise = PromiseResolve(%Promise%, value)` — wrap the awaited value in a promise.
-2. Build resume closures (fulfilled → resume with value; rejected → resume by throwing).
-3. **PerformPromiseThen(promise, onFulfilled, onRejected)** — i.e. `await x` ≈
-   `x.then(resume, throwIn)` internally.
-4. **Suspend** and return to the caller.
+For micro-frontends or widget architectures that share the event loop, one team's microtask storm can freeze another team's component. We use queueMicrotask sparingly and prefer requestIdleCallback or the Scheduler API for non-critical work.
 
-Because resumption flows through PerformPromiseThen → a promise job → HostEnqueuePromiseJob, **the
-code after every `await` runs as a microtask** — and `await` on a *non-promise* still wraps it via
-`PromiseResolve`, so it **still costs one microtask tick** (the Ch-02 "A, C, B" result, spec-proven).
+The JavaScript runtime is your platform. The event loop is its kernel. Design for it."
 
-## D. Prototype chain & `[[Get]]` (§10.1) — the lookup algorithm
+## Follow-up Questions
 
-Property reads are **OrdinaryGet(O, P, Receiver)**: look up the own property; if absent, get
-`O.[[GetPrototypeOf]]()` and **recurse** `parent.[[Get]](P, Receiver)` up the `[[Prototype]]`
-chain until found or `null`. Accessors run with the original `Receiver` as `this`. `__proto__` is a
-legacy accessor for the **`[[Prototype]]`** slot; a function's **`prototype`** property is a
-different thing — it's what `new` assigns as the instance's `[[Prototype]]`.
+**Q1: What is the difference between a microtask and a macrotask? Give one example of each.**
 
-## E. ES Modules: three phases + live bindings (§16)
+Microtasks come from Promise.then, async/await continuations, and queueMicrotask. Macrotasks come from setTimeout, setInterval, DOM events, and I/O callbacks. The event loop runs one macrotask per turn but drains all microtasks before the next macrotask.
 
-A module goes through **Load** (async fetch+parse the graph via `HostLoadImportedModule`) →
-**Link** (`Link()`/`InnerModuleLinking`: create each Module Environment Record; for each import
-`CreateImportBinding` makes an **immutable indirect binding** into the *exporter's* environment via
-`ResolveExport`) → **Evaluate** (`Evaluate()` runs each body **once**, bottom-up; returns a Promise
-for top-level await). `[[Status]]`: `new → unlinked → linking → linked → evaluating →
-evaluating-async → evaluated`.
+**Q2: Why does Promise.then(fn) run before setTimeout(fn, 0) even when the setTimeout appears first in the code?**
 
-Consequences (vs CommonJS):
-- **Imports are live, read-only views** — reads reflect the exporter's *current* value; you cannot
-  reassign an import (it's a `SyntaxError`). Only the exporting module can change it. (MDN: "The
-  value can only be re-assigned by the module exporting it.")
-- **Static structure** — imports are hoisted and statically analyzable → enables linking before
-  evaluation, and tree-shaking (Ch 20). **CommonJS `require()`** is a runtime call returning a
-  *value snapshot* of `module.exports`, resolved dynamically — no live bindings, no static graph.
-- **Top-level await**: a module with TLA has `[[HasTLA]]` true and evaluates via
-  `ExecuteAsyncModule`; it can block its *importers* but not sibling modules.
+setTimeout queues the callback as a macrotask. Promise.then queues it as a microtask. After synchronous code finishes, the event loop drains all microtasks first. Only then does it pick one macrotask. The timer callback is in the macrotask queue, behind the microtask drain. The Promise callback always wins.
 
-## Go deeper
-Sources: HTML Standard §8.1.7 (event loop, "perform a microtask checkpoint"); ECMA-262 §27.2
-(Promises), §27.7.5.3 (Await), §9.5 (Jobs / HostEnqueuePromiseJob), §10.1 (prototype), §16
-(Modules). Jake Archibald's *In The Loop* animates the queues; the spec is the source of truth.
+**Q3: An async function calls await on a non-promise value like await 5. Does this still cost a microtask tick? Explain why.**
+
+Yes. await internally calls Promise.resolve() to wrap the value in a Promise, then calls .then() on that Promise. Promise.resolve(5) returns a fulfilled promise. But .then() on a fulfilled promise still enqueues a microtask. So await null, await undefined, await 5 all cost at least one microtask tick. The function yields and resumes asynchronously.
+
+**Q4: A while(true) loop runs for 3 seconds. Why does the UI freeze, and what two approaches fix it?**
+
+The while(true) loop keeps the call stack busy for 3 seconds. The event loop cannot run its tick because the stack is never empty. No macrotasks (click handlers, timer callbacks) run. No microtasks (Promise reactions) run. No paint frames render.
+
+Fix one: break the work into chunks and schedule each chunk with setTimeout(..., 0). Each chunk runs as a macrotask. Between chunks, the stack empties and the event loop drains microtasks and paints.
+
+Fix two: move the work to a Web Worker. The worker runs on a separate thread. It communicates with the main thread via postMessage, which enqueues a task. The main thread stays responsive.
+
+**Q5: Describe the PerformMicrotaskCheckpoint algorithm. Why does it include a re-entrancy guard, and what happens if a microtask queues another microtask?**
+
+The algorithm has a boolean flag (isPerformingMicrotaskCheckpoint). On entry, if the flag is true, return immediately. Otherwise, set it to true. Then loop: while the microtask queue is not empty, dequeue and run the oldest microtask. After the loop, set the flag back to false.
+
+The re-entrancy guard prevents recursive checkpoints. If a microtask triggers an operation that would normally start a checkpoint (like resolving a Promise inside a Promise reaction), the nested call returns immediately. The outer loop handles the newly queued microtask.
+
+If a microtask queues another microtask, the while loop keeps going. It only stops when the queue is truly empty. This means an infinite chain of Promise.then calls (where each one creates another Promise) keeps the loop running forever. Macrotasks never get a turn. The page freezes.
+
+## Mental Trigger
+
+**"Empty stack, drain micros, one macro, repeat."**
+
+## One Page Revision
+
+- JavaScript: one thread, one call stack, one event loop.
+- Slow operations (network, timers, DOM events) handed to browser host.
+- Host finishes, enqueues callback into a queue.
+- Event loop picks callbacks when stack is empty.
+- Two queues: microtasks (Promise.then, await, queueMicrotask) and macrotasks (setTimeout, setInterval, events).
+- One macrotask per event loop turn.
+- ALL microtasks drain before next macrotask.
+- await desugars to Promise.resolve() + .then() + suspend.
+- await continuation always a microtask, even for non-promise values.
+- Long synchronous work starves event loop, freezes UI.
+- Fixes: chunk with setTimeout, or offload to Web Worker.
+- Microtask storms (infinite .then chain) starve macrotasks and rendering.
+- Event loop is the runtime scheduler. Design code around it.
+- Trigger: "Empty stack, drain micros, one macro, repeat."

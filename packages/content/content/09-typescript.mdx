@@ -13,35 +13,32 @@ description: "Generics, mapped types, conditional types, utility types"
 
 ## The one mental model
 
-> **A type is a SET of possible values. `string` is the set of all strings; `42` is a set with
-> one element; `"a" | "b"` is a two-element set; `boolean` is `true | false`. Assignability is
-> just the subset question: `x: A` is assignable to `B` if A's set ⊆ B's set. Generics are
-> FUNCTIONS at the type level — they take types in and return types out. The whole type system
-> is set theory + functions over sets, checked at compile time and erased at runtime.**
+> **A type is a SET of possible values. `string` is the set of all strings. `42` is a set with
+> one element. `"a" | "b"` is a two-element set. `boolean` is `true | false`. Assignability is
+> the subset question: `x: A` is assignable to `B` if A's set is a subset of B's set. Generics are
+> FUNCTIONS at the type level. They take types in and return types out. The whole type system
+> is set theory plus functions over sets, checked at compile time and erased at runtime.**
 
-From "types are sets" you derive: why unions widen and intersections narrow, why narrowing
-works, why `any` is poison (the universal set that disables checking), what `unknown` vs `never`
-are (the full set vs the empty set), and how utility types are computed. No memorizing utility
-types — you'll derive them.
+From "types are sets" you understand why unions widen and intersections narrow. You see why narrowing works. You know why `any` is poison (the universal set that disables checking). You understand what `unknown` vs `never` are (the full set vs the empty set). You see how utility types are computed. No need to memorize utility types. You will derive them.
 
 ---
 
 ## Learning Objectives
 
-1. Reason about assignability as subset relations; place `any`/`unknown`/`never` in the lattice.
-2. Use unions + **narrowing** and **discriminated unions** to model state safely.
-3. Read/write generics as type-level functions; understand inference and constraints.
-4. Derive utility types (`Partial`/`Pick`/`Record`/`ReturnType`) from mapped/conditional types.
+1. Reason about assignability as subset relations. Place `any`/`unknown`/`never` in the lattice.
+2. Use unions plus **narrowing** and **discriminated unions** to model state safely.
+3. Read and write generics as type-level functions. Understand inference and constraints.
+4. Derive utility types (`Partial`/`Pick`/`Record`/`ReturnType`) from mapped and conditional types.
 
 ---
 
 ## Key Mental Models
 
-- **Type = set of values; assignable = subset.**
+- **Type = set of values. Assignable = subset.**
 - **Union `A | B` = set union** (wider, fewer guarantees). **Intersection `A & B` = must be
   both** (narrower, more guarantees).
-- **`unknown` = the universal set** (everything; must narrow before use). **`never` = empty set**
-  (nothing; the impossible/exhaustiveness type). **`any` = opt out of the system.**
+- **`unknown` = the universal set** (everything, but you must narrow before use). **`never` = empty set**
+  (nothing, the impossible or exhaustiveness type). **`any` = opt out of the system.**
 - **Generics = functions from types to types.** `Array<T>` is a type-level function call.
 - **Types are erased at runtime.** No type info exists in the running JS (Ch 01).
 
@@ -49,20 +46,13 @@ types — you'll derive them.
 
 ## Introduction
 
-At SDE-2 you won't be asked "what's an interface." You'll be asked to model state so illegal
-states are unrepresentable, type a reusable generic component/hook, and explain why some
-assignment errors (or doesn't). All of it flows from "types are sets."
+At SDE-2 you will not be asked "what is an interface." You will be asked to model state so illegal states cannot exist. You will type a reusable generic component or hook. You will explain why some assignment works or does not. All of it comes from "types are sets."
 
 ---
 
 ## Problem
 
-JS has no compile-time guarantees: `user.adress` (typo) or `"5" - 1` blow up at runtime. The
-designers' problem: add a *checker* that proves whole classes of bugs gone *before* running,
-without changing the runtime. Solution: a structural type layer over JS values, fully erased
-at compile time. "Structural" = a value fits a type if its *shape* matches (it has the right
-members) — not by name/declaration. That's the set view again: the type is the set of all
-shapes with those members.
+JS has no compile-time guarantees. `user.adress` (typo) or `"5" - 1` blow up at runtime. The problem for the designers: add a *checker* that proves whole classes of bugs are gone *before* running, without changing the runtime. The solution: a structural type layer over JS values, fully erased at compile time. "Structural" means a value fits a type if its *shape* matches (it has the right members), not by name or declaration. That is the set view again. The type is the set of all shapes with those members.
 
 ```mermaid
 flowchart LR
@@ -74,7 +64,7 @@ flowchart LR
 
 ---
 
-## Engine Simulation — sets, narrowing, the lattice
+## Engine Simulation: sets, narrowing, the lattice
 
 ```ts
 type Status = "idle" | "loading" | "error" | "success";  // a 4-element set
@@ -94,11 +84,11 @@ function f(x: string | number) {
 The lattice (who is a subset of whom):
 
 ```
-            unknown   (universal set — everything assignable TO it; nothing FROM it w/o narrowing)
+            unknown   (universal set, everything is assignable TO it, nothing FROM it without narrowing)
            /   |   \
         string number boolean ...        each a subset of unknown
            \   |   /
-             never     (empty set — assignable to EVERYTHING, nothing assignable to it)
+             never     (empty set, assignable to EVERYTHING, nothing assignable to it)
 
    any  =  escape hatch: assignable both ways, turns checking OFF (avoid)
 ```
@@ -116,9 +106,9 @@ function render(s: Status) {
 
 ---
 
-## Discriminated unions — make illegal states impossible
+## Discriminated unions: make illegal states impossible
 
-The single most useful React TS pattern. Instead of optional fields that can contradict:
+This is the single most useful React TS pattern. Instead of optional fields that can contradict:
 
 ```ts
 // ✗ allows nonsense: loading:true with data present, or error with data
@@ -131,9 +121,7 @@ type State =
   | { status: "success"; data: Contact[] };
 ```
 
-The `status` tag is the **discriminant**: checking it narrows the union to one variant, so
-`state.data` only type-checks inside the `"success"` branch. Illegal combinations literally
-cannot be constructed. This pairs perfectly with the Ch 12 "cover all four states" rule.
+The `status` tag is the **discriminant**. Checking it narrows the union to one variant. So `state.data` only type-checks inside the `"success"` branch. Illegal combinations literally cannot be constructed. This pairs perfectly with the Ch 12 "cover all four states" rule.
 
 ---
 
@@ -149,10 +137,9 @@ function pluck<T, K extends keyof T>(obj: T, key: K): T[K] { return obj[key]; }
 pluck({ name: "Ada", age: 36 }, "age");  // K ⊆ ("name"|"age"); returns number
 ```
 
-`T` is a parameter to a type-level function; `extends` constrains which types are allowed in
-(a subset bound). Inference is TS solving for `T` from the arguments.
+`T` is a parameter to a type-level function. `extends` constrains which types are allowed in (a subset bound). Inference is TS solving for `T` from the arguments.
 
-Typing a generic React component (JD-relevant — a reusable `<Table>`):
+Typing a generic React component (JD-relevant, a reusable `<Table>`):
 ```ts
 type Column<T> = { key: keyof T; header: string; render?: (row: T) => ReactNode };
 function Table<T>({ rows, columns }: { rows: T[]; columns: Column<T>[] }) { /* ... */ }
@@ -161,9 +148,9 @@ function Table<T>({ rows, columns }: { rows: T[]; columns: Column<T>[] }) { /* .
 
 ---
 
-## Utility types — derived, not memorized
+## Utility types: derived, not memorized
 
-They're just mapped + conditional types (functions over the members of a type):
+They are just mapped and conditional types (functions over the members of a type):
 
 ```ts
 type Partial<T>  = { [K in keyof T]?: T[K] };        // map each key → optional
@@ -174,51 +161,40 @@ type Record<K extends keyof any, V> = { [P in K]: V };
 type ReturnType<F> = F extends (...a: any[]) => infer R ? R : never;  // conditional + infer
 ```
 
-Read `ReturnType` as: "if F is a function type, capture its return as `R` and return it, else
-`never`." `infer` binds a type variable inside a conditional. Once you can read these, you never
-memorize the utility list — you reconstruct it.
+Read `ReturnType` as: "if F is a function type, capture its return as `R` and return it. Otherwise return `never`." `infer` binds a type variable inside a conditional. Once you can read these, you never memorize the utility list. You reconstruct it.
 
 ---
 
 ## Interview Discussion (reason first)
 
 **Q1. "Why is `any` bad but `unknown` fine?"**
-> "`any` opts out of the type system — it's assignable both directions, so it disables checking
-> and lets runtime bugs through. `unknown` is the universal set: you can assign anything *to* it,
-> but you must **narrow** it before use, so safety is preserved. `unknown` is the safe top type;
-> `any` is a hole."
+> "`any` opts out of the type system. It is assignable both directions, so it disables checking and lets runtime bugs through. `unknown` is the universal set. You can assign anything *to* it, but you must **narrow** it before use. So safety is preserved. `unknown` is the safe top type. `any` is a hole."
 
-**Q2. "How do you model a fetch state so impossible combos can't exist?"**
-> Discriminated union on a `status` tag (above). Checking the tag narrows to one variant; fields
-> only exist where valid. Eliminates "loading && error && data" nonsense.
+**Q2. "How do you model a fetch state so impossible combos cannot exist?"**
+> Discriminated union on a `status` tag (above). Checking the tag narrows to one variant. Fields only exist where valid. This eliminates "loading && error && data" nonsense.
 
 **Q3. "What does `keyof`/`extends keyof` buy you?"**
-> "`keyof T` is the union of T's keys (a set of string literals). `K extends keyof T` constrains
-> a generic to be one of those keys, so `obj[key]` is type-safe and the return type `T[K]` is
-> exact — that's how type-safe property access / a generic table column works."
+> "`keyof T` is the union of T's keys (a set of string literals). `K extends keyof T` constrains a generic to be one of those keys. So `obj[key]` is type-safe and the return type `T[K]` is exact. That is how type-safe property access and a generic table column works."
 
-*Scoring:* full = sets/subset language + discriminated unions + generics-as-functions. Fail =
-listing syntax without the set intuition.
+*Scoring:* full answer uses sets/subset language, discriminated unions, and generics-as-functions. Fail answer lists syntax without the set intuition.
 
 ---
 
 ## Common Mistakes
 
-- **Reaching for `any`** to silence errors (use `unknown` + narrow, or fix the type).
+- **Reaching for `any`** to silence errors. Use `unknown` with narrowing, or fix the type.
 - **Optional-field state** that allows contradictions instead of a discriminated union.
-- **Over-generic code** — generics with no relationship between params add noise; only
-  generalize when types actually relate.
-- **Confusing type-space and value-space** (`typeof`/`keyof` are type-level; erased at runtime).
-- **Trusting types at runtime** — types are erased; validate external data with a runtime schema
-  (zod, Ch 18) at the boundary.
+- **Over-generic code.** Generics with no relationship between params just add noise. Only generalize when types actually relate.
+- **Confusing type-space and value-space.** `typeof` and `keyof` are type-level. They are erased at runtime.
+- **Trusting types at runtime.** Types are erased. Validate external data with a runtime schema (zod, Ch 18) at the boundary.
 
 ---
 
 ## Interview Questions
 
 1. Explain assignability for `"a" | "b"` vs `string`. Which way does it go and why (subsets)?
-2. Place `any`, `unknown`, `never` in the lattice; give a real use for `never`.
-3. Model a contacts-fetch state as a discriminated union; show narrowing.
+2. Place `any`, `unknown`, `never` in the lattice. Give a real use for `never`.
+3. Model a contacts-fetch state as a discriminated union. Show narrowing.
 4. Write `pluck<T, K extends keyof T>` and explain the constraint.
 5. Implement `ReturnType<F>` and read it aloud.
 
@@ -226,26 +202,19 @@ listing syntax without the set intuition.
 
 ## Homework
 
-1. Convert a boolean-flag fetch state to a discriminated union; try to construct an illegal
-   state and watch the compiler stop you.
-2. Hand-write `Partial`, `Pick`, `Record` from scratch (no `import`); verify against the lib types.
-3. Type a generic `useFetch<T>()` hook returning a discriminated union; in `NOTES.md` note why
-   the union beats `{data?, error?, loading}`.
+1. Convert a boolean-flag fetch state to a discriminated union. Try to construct an illegal state and watch the compiler stop you.
+2. Hand-write `Partial`, `Pick`, `Record` from scratch (no `import`). Verify against the lib types.
+3. Type a generic `useFetch<T>()` hook returning a discriminated union. In `NOTES.md` note why the union beats `{data?, error?, loading}`.
 
 ---
 
 ## Summary
 
-- **Types are sets; assignability is the subset question.** Union = wider, intersection =
-  narrower.
-- **`unknown` = universal set (narrow before use), `never` = empty set (exhaustiveness),
-  `any` = opt-out (avoid).**
-- **Discriminated unions** make illegal states unrepresentable — the key React state pattern.
-- **Generics are type-level functions**; `extends` constrains the input set; inference solves
-  for the type variable.
-- **Utility types are mapped/conditional types** you can derive; types are **erased at runtime**,
-  so validate external data with a schema at the boundary.
+- **Types are sets. Assignability is the subset question.** Union = wider. Intersection = narrower.
+- **`unknown` = universal set (narrow before use). `never` = empty set (exhaustiveness). `any` = opt-out (avoid).**
+- **Discriminated unions** make illegal states impossible to represent. They are the key React state pattern.
+- **Generics are type-level functions.** `extends` constrains the input set. Inference solves for the type variable.
+- **Utility types are mapped or conditional types** you can derive. Types are **erased at runtime**, so validate external data with a schema at the boundary.
 
 ## Go deeper
-Matt Pocock's *Total TypeScript* (free Beginner's + Type Transformations) is the best practice
-ground once the set model is solid. Ch 18 covers runtime validation (zod) at the data boundary.
+Matt Pocock's *Total TypeScript* (free Beginner's + Type Transformations) is the best practice ground once the set model is solid. Ch 18 covers runtime validation (zod) at the data boundary.

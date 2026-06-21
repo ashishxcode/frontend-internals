@@ -6,23 +6,22 @@ description: "Compound components, render props, HOCs, hooks"
 ---
 
 
-> Builds on Ch 03/05 (rendering, hooks), Ch 11 (architecture). The "pass children as a prop to
-> avoid re-renders" answer from Interviewer's memo question (interview guide §1) lives here.
+> **Prerequisites:** understanding of React's rendering process (how component functions produce elements and how state changes trigger re-render) and hooks (useState, useContext), plus familiarity with component composition patterns from shadcn/Radix.
 
 ---
 
 ## The one mental model
 
-> **Every React pattern answers one question: "who owns this state/behavior, and how do I let the
-> consumer customize without me predicting every case?" The lever is almost always COMPOSITION
-> over CONFIGURATION — instead of growing a component's props to cover every variation, let the
+> **Every React pattern answers one question: "who owns this state or behavior, and how do I let the
+> consumer customize without me predicting every case?" The tool is almost always COMPOSITION
+> over CONFIGURATION. Instead of growing a component's props to cover every variation, let the
 > caller pass in the pieces (elements, render functions, children). Composition pushes decisions
-> outward to where the context is, keeps components open to extension, and (bonus) preserves
+> outward to where the context is. It keeps components open to extension. And it preserves
 > element identity so React skips needless re-renders.**
 
-From "composition over configuration" you derive compound components, slots, render props,
-custom hooks, controlled-vs-uncontrolled, and why passing `children` fixes re-renders. No
-memorizing a pattern catalog — each is a way to move a decision to the caller.
+From "composition over configuration" you can see compound components, slots, render props,
+custom hooks, controlled-vs-uncontrolled, and why passing `children` fixes re-renders. You don't need
+to memorize a pattern catalog. Each pattern is a way to move a decision to the caller.
 
 ---
 
@@ -37,9 +36,9 @@ memorizing a pattern catalog — each is a way to move a decision to the caller.
 
 ## Key Mental Models
 
-- **Configuration = props that enumerate cases** (grows forever, rigid).
-- **Composition = caller passes the pieces** (`children`, slots, render fns) — flexible, open.
-- **`children` passed from a parent has stable element identity**, so it doesn't re-render when
+- **Configuration = props that list every case.** This grows forever and stays rigid.
+- **Composition = caller passes the pieces** (`children`, slots, render fns). This stays flexible and open.
+- **`children` passed from a parent has stable element identity.** So it does not re-render when
   the parent's own state changes (the re-render fix).
 - **Custom hooks share LOGIC; components share UI.** Hooks replaced most HOCs/render props.
 
@@ -54,7 +53,7 @@ patterns are also frequent machine-coding asks (build a `<Tabs>`, a `<Modal>`, a
 
 ---
 
-## Problem — configuration explodes
+## Problem: configuration explodes
 
 ```jsx
 // ❌ configuration: every new need adds a prop; rigid, huge API
@@ -64,9 +63,9 @@ patterns are also frequent machine-coding asks (build a `<Tabs>`, a `<Modal>`, a
   footerAlign="right" onConfirm={...} onCancel={...} />
 ```
 
-Each variation grows the prop surface; you can't express "a custom footer with two buttons and a
-checkbox" without yet more props. The component is trying to predict every use. **Composition**
-inverts it — give structure, let the caller fill it:
+Each variation grows the prop surface. You cannot express "a custom footer with two buttons and a
+checkbox" without yet more props. The component tries to predict every use. **Composition**
+flips this around. Give structure, let the caller fill it:
 
 ```jsx
 // ✅ composition: caller assembles the pieces
@@ -82,9 +81,9 @@ inverts it — give structure, let the caller fill it:
 
 ---
 
-## Compound components — implicit shared state
+## Compound components: implicit shared state
 
-The pieces coordinate through Context so the caller doesn't wire state manually:
+The pieces work together through Context. That way the caller does not wire state manually:
 
 ```jsx
 const TabsCtx = createContext();
@@ -103,12 +102,12 @@ Tabs.Panel = function Panel({ id, children }) {
 // Usage: <Tabs defaultTab="a"><Tabs.Tab id="a">A</Tabs.Tab><Tabs.Panel id="a">…</Tabs.Panel></Tabs>
 ```
 
-State is shared implicitly via Context; the caller composes structure freely. This is how Radix /
+State is shared implicitly via Context. The caller puts together structure freely. This is how Radix and
 shadcn (Ch 11) build accessible primitives.
 
 ---
 
-## Engine Simulation — composition fixes re-renders (Interviewer's trap)
+## Engine Simulation: composition fixes re-renders (Interviewer's trap)
 
 ```jsx
 // ❌ ExpensiveChild re-renders every time `count` changes, though it doesn't use count
@@ -130,10 +129,11 @@ function App() {
 }
 ```
 
-Why it works: `<ExpensiveChild/>` is created in `App`, which doesn't re-render on `count`. `Shell`
-re-renders and re-uses the *same* `children` element object (stable identity, Ch 01 reference
-model) → React reconciles it as unchanged → no re-render. **This is the structural alternative to
-`React.memo`** Interviewer was fishing for — often cleaner than wrapping in memo (interview guide §1).
+Here is why it works. `<ExpensiveChild/>` is created in `App`, which does not re-render on `count`. `Shell`
+re-renders but re-uses the *same* `children` element object. This is stable identity. In JavaScript,
+objects are compared by reference. So the same object reference means React treats it as
+unchanged. React reconciles it as unchanged, so there is no re-render. **This is the structural alternative to
+`React.memo`** that Interviewer was looking for. It is often cleaner than wrapping in memo (interview guide §1).
 
 ```mermaid
 flowchart TD
@@ -146,35 +146,35 @@ flowchart TD
 
 ## Controlled vs uncontrolled, render props, hooks
 
-- **Controlled vs uncontrolled (who owns the value):** a `<Select value onChange>` (caller owns)
-  vs `<Select defaultValue>` (component owns). Same axis as forms (Ch 18). Good components support
+- **Controlled vs uncontrolled (who owns the value).** A `<Select value onChange>` means the caller
+  owns the value. `<Select defaultValue>` means the component owns it. Same idea as forms (Ch 18). Good components support
   both.
-- **Render props / children-as-function:** `<Tooltip>{({open}) => ...}</Tooltip>` — caller
-  controls rendering with state the component provides. Mostly superseded by hooks but still handy
+- **Render props / children-as-function.** `<Tooltip>{({open}) => ...}</Tooltip>` means the caller
+  controls rendering with state the component provides. Mostly replaced by hooks but still handy
   for "give me state, you render."
-- **HOCs** (`withAuth(Component)`): wrap to inject behavior. Largely replaced by **custom hooks**
-  (`useAuth()`) which compose without wrapper hell and don't obscure the tree.
-- **Custom hooks** share *logic* (a `useDisclosure()`, `useDebouncedValue()`); components share
-  *UI*. Prefer a hook when the reuse is behavior, a component when it's markup.
+- **HOCs** (`withAuth(Component)`). They wrap to inject behavior. Largely replaced by **custom hooks**
+  (`useAuth()`). Hooks can be put together without wrapper hell and don't hide the tree.
+- **Custom hooks** share *logic* (a `useDisclosure()`, `useDebouncedValue()`). Components share
+  *UI*. Pick a hook when the reuse is behavior. Pick a component when it is markup.
 
 ---
 
 ## Interview Discussion (reason first)
 
 **Q1. "A child re-renders when an unrelated parent state changes. Fixes?"**
-> "Two options. `React.memo` the child + stable props — but it has a compare cost and no-ops on
-> unstable props. Often cleaner: **composition** — pass the child as `children` from a component
-> that doesn't own the changing state, so its element identity stays stable and React skips it.
-> I'd reach for composition first, memo for measured hot spots." *(Don't say 'memo everything'.)*
+> "Two options. Use `React.memo` on the child with stable props. But it has a compare cost and does nothing on
+> unstable props. Often cleaner: **composition**. Pass the child as `children` from a component
+> that does not own the changing state. That way its element identity stays stable and React skips it.
+> I would use composition first, then memo for measured hot spots." *(Don't say 'memo everything'.)*
 
 **Q2. "Configuration vs composition?"**
-> "Configuration enumerates cases as props and grows rigidly; composition lets the caller pass the
-> pieces (children/slots/render fns), so new cases need no API change and decisions live where the
+> "Configuration lists cases as props and grows rigid. Composition lets the caller pass the
+> pieces (children/slots/render fns). New cases need no API change. Decisions live where the
 > context is. Compound components (Context-shared state) are the common pattern."
 
 **Q3. "HOC vs custom hook?"**
-> "Both reuse logic. HOCs wrap components (wrapper nesting, prop collisions, obscured tree); custom
-> hooks compose flat, are explicit, and don't change the tree. Hooks replaced most HOC use; I reach
+> "Both reuse logic. HOCs wrap components, which creates wrapper nesting, prop collisions, and a hidden tree. Custom
+> hooks can be put together flat, are explicit, and don't change the tree. Hooks replaced most HOC use. I reach
 > for a hook to share logic and a component to share UI."
 
 *Scoring:* full = composition-over-config + children-stable-identity re-render fix + hooks>HOC.
@@ -183,11 +183,11 @@ flowchart TD
 
 ## Common Mistakes
 
-- **Boolean-prop explosion** instead of composing structure.
+- **Boolean-prop explosion** instead of putting together structure.
 - **Reaching for `memo`** when a composition (`children`) fix is cleaner (Interviewer's point).
-- **HOC wrapper hell / prop collisions** where a custom hook would be flat and clear.
-- **Compound components without Context** → forcing the caller to wire state by hand.
-- **Supporting only controlled or only uncontrolled** when both are cheap to allow.
+- **HOC wrapper hell or prop collisions** where a custom hook would be flat and clear.
+- **Compound components without Context** which forces the caller to wire state by hand.
+- **Supporting only controlled or only uncontrolled** when both are easy to allow.
 
 ---
 
@@ -203,7 +203,7 @@ flowchart TD
 
 ## Homework
 
-1. Build `<Tabs>` as a compound component with Context-shared active state + a11y roles (Ch 23).
+1. Build `<Tabs>` as a compound component with Context-shared active state and a11y roles (Ch 23).
 2. Reproduce the unrelated-re-render, fix it with the `children` composition trick, prove it in
    the Profiler, then compare to a `memo` fix.
 3. In `NOTES.md`: composition-over-configuration + the children-identity re-render fix in one line.
@@ -213,11 +213,11 @@ flowchart TD
 ## Summary
 
 - Every pattern = **"who owns it, and how does the caller customize?"** Answer with **composition
-  over configuration**: pass pieces (children/slots/render fns) instead of enumerating props.
-- **Compound components** share state implicitly via Context (how Radix/shadcn work).
-- **Passing `children`** keeps element identity stable, so a parent's state change skips
-  re-rendering them — the structural alternative to `React.memo` (Interviewer's trap).
-- **Controlled vs uncontrolled** = who owns the value (Ch 18); **custom hooks** share logic and
+  over configuration**. Pass pieces (children/slots/render fns) instead of listing props.
+- **Compound components** share state implicitly via Context. This is how Radix and shadcn work.
+- **Passing `children`** keeps element identity stable. So a parent's state change skips
+  re-rendering them. This is the structural alternative to `React.memo` (Interviewer's trap).
+- **Controlled vs uncontrolled** = who owns the value (Ch 18). **Custom hooks** share logic and
   have largely replaced **HOCs/render props**.
 
 ## Go deeper

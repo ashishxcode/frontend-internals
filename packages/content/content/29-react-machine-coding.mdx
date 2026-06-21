@@ -6,21 +6,21 @@ description: "Searchable dropdown, tabs, modal, infinite scroll, OTP"
 ---
 
 
-> Builds on Ch 03 (rendering), Ch 05 (hooks), Ch 06 (keys), Ch 24 (patterns).
-> The shared-editor / CoderPad round — build a working component from scratch.
+> Prerequisites: React rendering and reconciliation (how React diffs the virtual DOM and commits updates), hooks (useState, useEffect, useRef, useCallback. These are the primitives for stateful function components), key prop (how React identifies elements across renders, critical for lists and form inputs), and component patterns (controlled vs uncontrolled, lifting state up, render props).
+> The shared-editor / CoderPad round. Build a working component from scratch.
 
 ---
 
 ## The one mental model
 
 > **Machine coding tests your component instinct: can you go from prompt → minimal state →**
-> **working UI → edge cases → accessibility in 15–20 minutes, narrating your reasoning?**
+> **working UI → edge cases → accessibility in 15 to 20 minutes, narrating your reasoning?**
 > **The interviewer is NOT checking if you remember the exact API. They're checking:**
 > **"Can this person BUILD something that works, handle the full interaction lifecycle,**
 > **and talk about tradeoffs while coding?"**
 
-From "minimal state → working UI → edges" you derive: use `useState` before over-engineering,
-discriminated unions for status, controlled vs uncontrolled decision, keyboard + screen reader
+From "minimal state → working UI → edges" you learn: use `useState` before over-engineering,
+discriminated unions for status, controlled vs uncontrolled choice, keyboard + screen reader
 support, and the four states (loading, empty, error, data).
 
 ---
@@ -85,10 +85,10 @@ This is the most common machine-coding question at SDE-2 level.
 ### Requirements
 
 - Text input filters a list
-- Keyboard: ArrowUp/ArrowDown to navigate, Enter to select, Escape to close
-- Click outside closes
+- Keyboard: ArrowUp and ArrowDown to navigate, Enter to select, Escape to close
+- Click outside closes the dropdown
 - Debounced async search with cancel
-- Loading / empty / error states
+- Loading, empty, and error states
 - `aria-combobox` pattern for screen readers
 
 ### Minimal state
@@ -272,7 +272,7 @@ function Tabs({ tabs, activeTab, onChange, defaultTab }) {
 
 ### Interview notes
 
-- Use `role="tablist"`, `role="tab"`, `role="tabpanel"` — screen readers need this.
+- Use `role="tablist"`, `role="tab"`, `role="tabpanel"`. Screen readers need this.
 - `aria-selected` on the active tab.
 - `aria-controls` connects tab → panel.
 - Arrow keys to navigate between tabs (roving tabindex).
@@ -382,7 +382,7 @@ function InfiniteList({ fetchItems }) {
 
 ### Interview notes
 
-- `IntersectionObserver` is more performant than scroll listeners (Ch 17).
+- `IntersectionObserver` performs better than scroll listeners. Scroll listeners fire on every pixel scroll (60+ times/sec) on the main thread. IntersectionObserver is browser-native and callback-driven. It only fires when observed elements cross the viewport boundary.
 - `rootMargin` gives us a lookahead buffer so we load before the user reaches the bottom.
 - Clean up observer in `useEffect` return to prevent memory leaks.
 - Guard against duplicate calls with a `loading` flag.
@@ -392,7 +392,7 @@ function InfiniteList({ fetchItems }) {
 
 ## 5. Virtual List
 
-### Mental model — windowing
+### Mental model: windowing
 
 ```mermaid
 flowchart TB
@@ -473,15 +473,15 @@ function VirtualList({ items, itemHeight = 40, containerHeight = 400 }) {
   during fast scrolling.
 - **Dynamic heights**: Need to measure each row and maintain a cumulative height array.
   Use `ResizeObserver` per row.
-- **Key**: Use item ID, not index — indexes shift when items are filtered/sorted.
-- **Tab navigation**: Focusable elements inside virtual rows need special handling —
-  ensure focus doesn't jump unexpectedly.
+- **Key**: Use item ID, not index. Indexes shift when items are filtered or sorted.
+- **Tab navigation**: Focusable elements inside virtual rows need special handling.
+  Make sure focus does not jump unexpectedly.
 - **Libraries**: `react-window` (fixed), `react-virtuoso` (dynamic), `@tanstack/react-virtual`.
 
 ### Real-world
 
-"I'd reach for `@tanstack/react-virtual` for a production virtual list — it handles
-dynamic heights, sticky headers, scroll-to-index, and RTL. But for the interview, I'd
+"I would use `@tanstack/react-virtual` for a production virtual list. It handles
+dynamic heights, sticky headers, scroll-to-index, and RTL. But for the interview, I would
 build a fixed-height version to show I understand the windowing mechanics."
 
 ---
@@ -764,7 +764,7 @@ function MultiStepForm({ steps, onSubmit }) {
 
 ---
 
-## Common Machine Coding Prompts — Quick Reference
+## Common Machine Coding Prompts: Quick Reference
 
 | Prompt | Key technique | Time |
 |---|---|---|

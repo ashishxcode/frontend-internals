@@ -6,21 +6,20 @@ description: "React Hook Form, Zod, controlled inputs, validation"
 ---
 
 
-> Builds on Ch 03/05 (controlled state, re-render), Ch 09 (types/zod), Ch 21 (useReducer).
-> Forms are where "who owns the value" and "how often does this re-render" collide.
+> **Prerequisites:** understanding of React controlled state and re-render behavior. You need to know how state changes trigger component re-renders. You also need TypeScript types and Zod schemas for runtime validation. The useReducer pattern for complex state transitions helps too.
 
 ---
 
 ## The one mental model
 
-> **A form is just state plus a validation function: `errors = validate(values)`, and the UI is
-> a function of `(values, errors, touched, submitting)`. The ONLY real decision is WHO OWNS each
-> field's value: React (controlled — value lives in state, every keystroke re-renders) or the DOM
-> (uncontrolled — value lives in the input, React reads it on submit via a ref). Performance and
-> ergonomics both flow from that ownership choice.**
+> **A form is just state plus a validation function: `errors = validate(values)`. The UI is
+> a function of `(values, errors, touched, submitting)`. The only real decision is WHO OWNS each
+> field's value. React controlled means the value lives in state and every keystroke re-renders.
+> DOM uncontrolled means the value lives in the input and React reads it on submit via a ref.
+> Performance and usability both come from that ownership choice.**
 
-From "who owns the value" you derive why big controlled forms get slow, why react-hook-form is
-fast (it's uncontrolled under the hood), where validation runs, and how to type it all with zod.
+From "who owns the value" you understand why big controlled forms get slow. You understand why react-hook-form is
+fast (it is uncontrolled under the hood). You understand where validation runs and how to type it all with zod.
 
 ---
 
@@ -39,19 +38,19 @@ fast (it's uncontrolled under the hood), where validation runs, and how to type 
 - **Uncontrolled = value in the DOM** (`defaultValue` + ref/FormData): React reads on submit.
 - **Validation is a pure function** `validate(values) → errors`; a schema (zod) is that function
   plus runtime parsing + inferred types.
-- **Form UI = f(values, errors, touched, submitting)** — the four-state idea again (Ch 09/12).
+- **Form UI = f(values, errors, touched, submitting)**. This is the four-state idea again (Ch 09 and 12).
 
 ---
 
 ## Introduction
 
-Forms are the most common machine-coding task (a product company has search/filter/bulk forms
-everywhere) and a frequent perf gotcha. The whole topic is small once you see it as state +
-validate(), with one ownership decision driving the rest.
+Forms are the most common machine-coding task. A product company has search, filter, and bulk forms
+everywhere. Forms are also a frequent performance gotcha. The whole topic becomes small once you see it as state plus
+`validate()`, with one ownership decision driving the rest.
 
 ---
 
-## Problem — the controlled re-render cost
+## Problem: the controlled re-render cost
 
 ```jsx
 function BigForm() {
@@ -62,10 +61,10 @@ function BigForm() {
 }
 ```
 
-Controlled inputs put each value in React state, so **every keystroke re-renders the whole form**
-(Ch 03). For a few fields, fine. For large forms or expensive children, it janks. The tension:
-controlled gives you live access to values (for validation/derived UI) but costs renders;
-uncontrolled is cheap but you only read values on demand.
+Controlled inputs put each value in React state. So **every keystroke re-renders the whole form**
+(Ch 03). For a few fields, this is fine. For large forms or expensive children, it causes jank. The tradeoff:
+controlled gives you live access to values for validation and derived UI, but costs renders.
+Uncontrolled is cheap, but you only read values on demand.
 
 ```mermaid
 flowchart LR
@@ -76,7 +75,7 @@ flowchart LR
 
 ---
 
-## Engine Simulation — controlled vs uncontrolled
+## Engine Simulation: controlled vs uncontrolled
 
 ```jsx
 // Controlled: React owns the value
@@ -91,17 +90,17 @@ const ref = useRef();
 <form onSubmit={e => { const data = Object.fromEntries(new FormData(e.target)); }}>
 ```
 
-**react-hook-form (RHF) — why it's fast:** it keeps inputs *uncontrolled* and registers them via
-refs, subscribing to changes outside React's render. The form component does **not** re-render on
-every keystroke; only the fields that need to (e.g. one with a new error) update. That's the perf
-win — it's "uncontrolled + subscriptions," which is exactly the Ch 21 selector idea applied to
+**react-hook-form (RHF) and why it is fast:** it keeps inputs *uncontrolled* and registers them via
+refs. It subscribes to changes outside React's render cycle. The form component does **not** re-render on
+every keystroke. Only the fields that need to update do, for example one with a new error. That is the performance
+win. It is "uncontrolled plus subscriptions." This is exactly the Ch 21 selector idea applied to
 forms.
 
 ---
 
 ## Validation & schema (zod, ties to Ch 09)
 
-Validation is a pure function. A schema library makes it declarative *and* gives you types:
+Validation is a pure function. A schema library makes it declarative and also gives you types:
 
 ```ts
 import { z } from "zod";
@@ -109,14 +108,14 @@ const Schema = z.object({
   email: z.string().email(),
   age: z.coerce.number().min(18),
 });
-type FormValues = z.infer<typeof Schema>;   // types DERIVED from the schema (Ch 09)
+type FormValues = z.infer<typeof Schema>;   // types COME FROM the schema (Ch 09)
 const result = Schema.safeParse(values);    // runtime validation at the boundary
 ```
 
-Because types are erased at runtime (Ch 09), you validate *external/user input* with a runtime
-schema at the boundary, and reuse the same schema's inferred type for the form values. One source
-of truth for shape + validation. **When to validate:** on submit always; on blur for nicer UX
-(mark `touched`); on change for instant feedback (debounce expensive checks).
+Because types are removed at runtime (Ch 09), you validate external and user input with a runtime
+schema at the boundary. You reuse the same schema's inferred type for the form values. This gives one source
+of truth for both shape and validation. **When to validate:** always on submit. Validate on blur for nicer UX
+(mark `touched`). Validate on change for instant feedback. Debounce expensive checks.
 
 ---
 
@@ -138,22 +137,22 @@ RHF gives you this state machine out of the box.
 
 ## Interview Discussion (reason first)
 
-**Q1. "Controlled vs uncontrolled — which and why?"**
-> "It's about who owns the value. Controlled = React state, re-renders every keystroke, but gives
-> live values for validation/derived UI. Uncontrolled = DOM owns it, read on submit, no per-key
-> re-render. For small/interactive forms I go controlled; for large forms or perf-sensitive ones
-> I use uncontrolled / react-hook-form, which registers inputs by ref and avoids form-wide
+**Q1. "Controlled vs uncontrolled: which and why?"**
+> "It is about who owns the value. Controlled means React state, re-renders every keystroke, but gives
+> live values for validation and derived UI. Uncontrolled means the DOM owns it, you read on submit, no per-key
+> re-render. For small or interactive forms I use controlled. For large forms or performance-sensitive ones
+> I use uncontrolled or react-hook-form. It registers inputs by ref and avoids form-wide
 > re-renders."
 
 **Q2. "Why is react-hook-form fast?"**
-> "It keeps inputs uncontrolled and subscribes to field changes outside React's render, so typing
-> doesn't re-render the whole form — only fields that must (e.g. a changed error). Same idea as
+> "It keeps inputs uncontrolled and subscribes to field changes outside React's render cycle. So typing
+> does not re-render the whole form. Only fields that must update do, for example one with a changed error. Same idea as
 > selector subscriptions in a store."
 
 **Q3. "Where does validation live and how do types fit?"**
-> "Validation is a pure `validate(values)→errors`. A zod schema is that plus runtime parsing; I
-> infer the form's TypeScript type from the schema (Ch 09) so shape and validation share one
-> source, and I parse external input at the boundary since types are erased at runtime."
+> "Validation is a pure `validate(values)` that returns errors. A zod schema is that plus runtime parsing. I
+> infer the form's TypeScript type from the schema (Ch 09). Shape and validation share one
+> source. I parse external input at the boundary since types are removed at runtime."
 
 *Scoring:* full = ownership-drives-perf + RHF-is-uncontrolled + schema-as-validate+types.
 
@@ -161,11 +160,11 @@ RHF gives you this state machine out of the box.
 
 ## Common Mistakes
 
-- **Large controlled forms** that re-render on every keystroke and jank — go uncontrolled/RHF.
-- **Switching an input from uncontrolled to controlled** mid-life (`value` going from `undefined`
-  to a string) → React warning + bugs. Pick one.
-- **Trusting client validation only** — always validate server-side too; client validation is UX.
-- **Validating on every keystroke with expensive/async checks** without debounce.
+- **Large controlled forms** that re-render on every keystroke and jank. Use uncontrolled or RHF instead.
+- **Switching an input from uncontrolled to controlled** during its lifetime. When `value` goes from `undefined`
+  to a string, React throws a warning and causes bugs. Pick one mode and stick with it.
+- **Trusting client validation only.** Always validate server-side too. Client validation is for UX, not security.
+- **Validating on every keystroke with expensive or async checks** without debounce.
 - **Duplicating shape in a type and a validator** instead of inferring the type from the schema.
 
 ---
@@ -191,14 +190,14 @@ RHF gives you this state machine out of the box.
 
 ## Summary
 
-- A **form = state + `validate(values)`**; UI is `f(values, errors, touched, status)`.
+- A **form equals state plus `validate(values)`**. UI is `f(values, errors, touched, status)`.
 - The core decision is **who owns the value**: controlled (React state, re-render per key, live
-  values) vs uncontrolled (DOM owns it, read on submit, cheap).
-- **react-hook-form** is fast because it's uncontrolled + ref subscriptions — no form-wide
+  values) versus uncontrolled (DOM owns it, read on submit, cheap).
+- **react-hook-form** is fast because it uses uncontrolled plus ref subscriptions. No form-wide
   re-render per keystroke.
-- **Validation is a pure function**; a **zod schema** gives runtime parsing + an inferred type
-  (Ch 09) from one source; validate external input at the boundary and on the server too.
-- Model state with a discriminated `status`; `useReducer` (Ch 21) fits the transitions.
+- **Validation is a pure function**. A **zod schema** gives runtime parsing and an inferred type
+  (Ch 09) from one source. Validate external input at the boundary and on the server too.
+- Model state with a discriminated `status`. `useReducer` (Ch 21) fits the transitions well.
 
 ## Go deeper
 Ch 09 (types/inference), Ch 21 (useReducer), Ch 23 (accessible forms: labels, error

@@ -20,16 +20,15 @@ description: "DOM/CSSOM, layout, paint, composite"
 > restarts at Paint. Changing `transform`/`opacity` only re-composites (GPU, cheapest). All of
 > this competes with JS for the ONE main thread (Ch 02).**
 
-From this single ordering you derive: why `transform` animations are smooth and `top`
-animations jank, what "layout thrashing" is and how to batch reads/writes, why `will-change`
-helps, and why a long JS task blocks paint.
+From this single ordering you understand why `transform` animations are smooth and `top`
+animations jank. You see what "layout thrashing" is and how to batch reads and writes. You know why `will-change` helps. You understand why a long JS task blocks paint.
 
 ---
 
 ## Learning Objectives
 
 1. Recite the pipeline and which stage each kind of change re-triggers.
-2. Derive reflow (layout) vs repaint vs composite-only and their costs.
+2. Understand reflow (layout) vs repaint vs composite-only and their costs.
 3. Explain layout thrashing and fix it by batching DOM reads then writes.
 4. Connect "long task = no paint" back to Ch 02 and forward to Ch 08.
 
@@ -37,29 +36,22 @@ helps, and why a long JS task blocks paint.
 
 ## Key Mental Models
 
-- **Pipeline order = cost order.** Restart at Layout (worst) → Paint → Composite (best).
-- **Reflow (layout)** recomputes geometry for the changed node *and often its neighbors/parents*.
-- **`transform`/`opacity`** are handled by the compositor → skip layout & paint.
+- **Pipeline order = cost order.** Restart at Layout (worst) then Paint then Composite (best).
+- **Reflow (layout)** recomputes geometry for the changed node and often its neighbors and parents.
+- **`transform`/`opacity`** are handled by the compositor. They skip layout and paint.
 - **Layout is synchronous on the main thread.** Reading a layout property *forces* it to run now.
 
 ---
 
 ## Introduction
 
-React's job ends at the DOM (Ch 03 commit). What turns that DOM into something you see — and why
-some UI updates are buttery and others stutter — is this pipeline. It's the backbone of every
-"make this animation/scroll smooth" and "why is my page janky" question, and it's the *why*
-behind the virtualization `transform` trick in Ch 08.
+React's job ends at the DOM (Ch 03 commit). This pipeline turns that DOM into something you see. It explains why some UI updates are smooth and others stutter. It is the backbone of every "make this animation or scroll smooth" question. It is also the *why* behind the virtualization `transform` trick in Ch 08.
 
 ---
 
 ## Problem
 
-The browser must answer, for every element: what are you, how big are you, where do you go,
-what color, and who's on top? It can't do that in one pass — size depends on CSS, position
-depends on siblings, painting depends on position, stacking depends on paint. So it's staged.
-And because there's one main thread (Ch 02), this work competes with your JS: a long task means
-no frame gets painted, so the page freezes.
+The browser must answer for every element: what are you, how big are you, where do you go, what color, and who is on top? It cannot do that in one pass. Size depends on CSS. Position depends on siblings. Painting depends on position. Stacking depends on paint. So the work is staged. And because there is one main thread (Ch 02), this work competes with your JS. A long task means no frame gets painted, so the page freezes.
 
 ```mermaid
 flowchart LR
@@ -75,25 +67,25 @@ flowchart LR
 
 ---
 
-## Mental Model — what each change re-triggers
+## Mental Model: what each change re-triggers
 
 ```
 change a node's width / top / font-size / add-remove DOM
-        └─▶ LAYOUT → PAINT → COMPOSITE        (reflow — most expensive)
+        └─▶ LAYOUT → PAINT → COMPOSITE        (reflow, most expensive)
 
 change a node's color / background / box-shadow / visibility
-        └─▶ PAINT → COMPOSITE                 (repaint — medium)
+        └─▶ PAINT → COMPOSITE                 (repaint, medium)
 
 change a node's transform / opacity (on its own layer)
-        └─▶ COMPOSITE only                    (cheapest — GPU)
+        └─▶ COMPOSITE only                    (cheapest, GPU)
 ```
 
 This table is the whole chapter. Animate `transform: translateX()` not `left`. Animate
-`opacity` not `visibility`/`display`. The smooth-vs-janky difference is which stage you restart.
+`opacity` not `visibility` or `display`. The smooth vs janky difference is which stage you restart.
 
 ---
 
-## Engine Simulation — layout thrashing
+## Engine Simulation: layout thrashing
 
 The trap: interleaving DOM **reads** and **writes** forces layout to run repeatedly within one
 frame.
@@ -108,10 +100,10 @@ for (const box of boxes) {
 
 ```
 write → invalidate → READ forces layout → write → invalidate → READ forces layout → ...
-   (N elements ⇒ ~N synchronous layouts in one frame ⇒ jank)
+   (N elements means ~N synchronous layouts in one frame, which means jank)
 ```
 
-Fix: **batch all reads, then all writes** (read phase / write phase):
+Fix: **batch all reads, then all writes** (read phase, then write phase):
 
 ```js
 // ✅ one layout: read everything first, then write everything
@@ -120,8 +112,8 @@ boxes.forEach((b, i) => b.style.width = widths[i] + 10 + "px"); // writes (one l
 ```
 
 Layout-forcing properties to know: `offsetTop/Width/Height`, `getBoundingClientRect()`,
-`scrollTop`, `getComputedStyle()`. Reading any of these *flushes* pending style/layout work
-synchronously — that's why reading them in a loop after writing thrashes.
+`scrollTop`, `getComputedStyle()`. Reading any of these *flushes* pending style and layout work
+synchronously. That is why reading them in a loop after writing thrashes.
 
 ---
 
@@ -138,8 +130,8 @@ sequenceDiagram
   Note over Task,Pipe: a long JS task delays rAF + paint → dropped frames (jank)
 ```
 
-`requestAnimationFrame` runs your callback right before the browser paints — the correct place
-for visual updates (Ch 17). A 50ms JS task blows the ~16.7ms frame budget (60fps) → dropped
+`requestAnimationFrame` runs your callback right before the browser paints. It is the correct place
+for visual updates (Ch 17). A 50ms JS task blows the ~16.7ms frame budget (60fps). That means dropped
 frames. Same lesson as Ch 02: keep main-thread tasks short or move work off-thread.
 
 ---
@@ -147,39 +139,33 @@ frames. Same lesson as Ch 02: keep main-thread tasks short or move work off-thre
 ## Interview Discussion (reason first)
 
 **Q1. "Why animate with `transform` instead of `top`/`left`?"**
-> "`top`/`left` change geometry → restart at **Layout** every frame (then paint, composite) —
-> expensive and janky. `transform` is handled by the **compositor** on the GPU → skips layout
-> and paint, just re-composites. Same visual move, far cheaper. That's also why virtualized
-> rows are positioned with `translateY` (Ch 08)."
+> "`top`/`left` change geometry. They restart at **Layout** every frame (then paint, composite). This is expensive and janky. `transform` is handled by the **compositor** on the GPU. It skips layout and paint, and just re-composites. The visual move is the same but far cheaper. That is also why virtualized rows are positioned with `translateY` (Ch 08)."
 
 **Q2. "What is layout thrashing and how do you fix it?"**
-> "Forcing synchronous layout repeatedly by interleaving reads (`offsetWidth`,
-> `getBoundingClientRect`) and writes in a loop — each read flushes the layout the previous
-> write invalidated. Fix: batch all reads, then all writes, so layout runs once."
+> "Forcing synchronous layout repeatedly by interleaving reads (`offsetWidth`, `getBoundingClientRect`) and writes in a loop. Each read flushes the layout that the previous write invalidated. Fix: batch all reads, then all writes, so layout runs once."
 
 **Q3. "Why does a heavy JS loop freeze animations?"**
-> "One main thread. Layout/paint happen between tasks; while JS runs, no frame is produced. A
-> task over the ~16ms frame budget drops frames. Chunk the work or use a Web Worker (Ch 02/17)."
+> "One main thread. Layout and paint happen between tasks. While JS runs, no frame is produced. A task over the ~16ms frame budget drops frames. Chunk the work or use a Web Worker (Ch 02/17)."
 
-*Scoring:* full = pipeline-order-is-cost + transform-skips-layout + thrashing read/write batching.
+*Scoring:* full answer includes pipeline-order-is-cost, transform-skips-layout, and thrashing read/write batching.
 
 ---
 
 ## Common Mistakes
 
-- **Animating `width`/`height`/`top`/`margin`** for smooth motion — use `transform`/`opacity`.
-- **Reading layout props inside a write loop** → thrashing.
-- **Overusing `will-change`/layer promotion** — too many GPU layers costs memory; use sparingly.
-- **Blaming React for jank** that's actually layout/paint or a long task (profile — Ch 08).
-- **Thinking `display:none`→`block` is cheap** — it's a reflow (and remounts in React subtrees).
+- **Animating `width`/`height`/`top`/`margin`** for smooth motion. Use `transform` or `opacity` instead.
+- **Reading layout props inside a write loop.** This causes thrashing.
+- **Overusing `will-change` or layer promotion.** Too many GPU layers costs memory; use sparingly.
+- **Blaming React for jank** that is actually layout/paint or a long task (profile with Ch 08).
+- **Thinking `display:none` to `block` is cheap.** It is a reflow (and remounts in React subtrees).
 
 ---
 
 ## Interview Questions
 
-1. For each: width change, color change, `transform` — which pipeline stages re-run?
-2. Write thrashing code, then fix it; explain why the fix is one layout.
-3. What's the frame budget at 60fps, and what happens to paint during a 40ms task?
+1. For each: width change, color change, `transform`. Which pipeline stages re-run?
+2. Write thrashing code, then fix it. Explain why the fix is one layout.
+3. What is the frame budget at 60fps, and what happens to paint during a 40ms task?
 4. Why is `transform` GPU-composited and `top` not?
 5. Where does `requestAnimationFrame` fire relative to paint, and why use it for visual updates?
 
@@ -187,25 +173,18 @@ frames. Same lesson as Ch 02: keep main-thread tasks short or move work off-thre
 
 ## Homework
 
-1. Animate a box across the screen two ways (`left` vs `transform`); record both in the
-   Performance panel and compare the green (paint)/purple (layout) bars.
-2. Reproduce layout thrashing with `offsetWidth` in a loop; fix with read/write batching;
-   measure the layout count.
-3. In `NOTES.md`: the cost-ordered pipeline in one line, plus the three change→stage rules.
+1. Animate a box across the screen two ways (`left` vs `transform`). Record both in the Performance panel and compare the green (paint) and purple (layout) bars.
+2. Reproduce layout thrashing with `offsetWidth` in a loop. Fix with read/write batching. Measure the layout count.
+3. In `NOTES.md`: the cost-ordered pipeline in one line, plus the three change-to-stage rules.
 
 ---
 
 ## Summary
 
-- Pixels come from **DOM+CSSOM → Render Tree → Layout → Paint → Composite**, and **pipeline
-  order = cost order** (later start = cheaper).
-- **Geometry changes reflow (Layout); color changes repaint (Paint); `transform`/`opacity`
-  only composite (GPU)** — animate the last kind.
-- **Layout thrashing** = interleaved reads/writes forcing repeated synchronous layout; fix by
-  batching reads then writes.
-- It all runs on the **one main thread** (Ch 02): long tasks block paint → jank;
-  `requestAnimationFrame` is the slot just before paint.
+- Pixels come from **DOM+CSSOM → Render Tree → Layout → Paint → Composite**. **Pipeline order = cost order** (later start = cheaper).
+- **Geometry changes reflow (Layout). Color changes repaint (Paint). `transform`/`opacity` only composite (GPU).** Animate the last kind.
+- **Layout thrashing** is interleaved reads and writes that force repeated synchronous layout. Fix by batching reads then writes.
+- It all runs on the **one main thread** (Ch 02). Long tasks block paint, which causes jank. `requestAnimationFrame` is the slot just before paint.
 
 ## Go deeper
-Ch 08 turns these rules into perf wins (virtualization `transform`, profiling). Mariko Kosaka's
-*Inside look at modern web browsers* illustrates the pipeline if you want visuals later.
+Ch 08 turns these rules into perf wins (virtualization `transform`, profiling). Mariko Kosaka's *Inside look at modern web browsers* illustrates the pipeline if you want visuals later.

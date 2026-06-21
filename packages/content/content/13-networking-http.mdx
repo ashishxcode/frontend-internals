@@ -6,8 +6,8 @@ description: "HTTP/1.1·2·3, caching, CORS, WebSockets, CDN"
 ---
 
 
-> Builds on Ch 02 (async/fetch) and Ch 10 (caching). The JD asks you to "collaborate with
-> backend to resolve ambiguity" — that means knowing the wire.
+> Prerequisites: `fetch` API, async/await, Promise (Ch 02); stale-while-revalidate caching model (Ch 10). The JD asks you to "collaborate with
+> backend to resolve ambiguity." That means knowing the wire.
 
 ---
 
@@ -20,9 +20,9 @@ description: "HTTP/1.1·2·3, caching, CORS, WebSockets, CDN"
 > "reuse this for N seconds" or "ask if it changed"). Security (CORS, cookies) is the browser
 > adding rules about WHO may send WHAT to WHOM.**
 
-From "message over a connection, optimized by reuse + caching" you derive why HTTP/2 fixed
+From "message over a connection, optimized by reuse + caching" you can understand why HTTP/2 fixed
 head-of-line blocking, what cache headers mean, why CORS preflights, and how cookies/JWT auth
-flow. No memorizing header lists — you reason about reuse and freshness.
+flow. No memorizing header lists. You reason about reuse and freshness.
 
 ---
 
@@ -46,9 +46,9 @@ flow. No memorizing header lists — you reason about reuse and freshness.
 
 ## Introduction
 
-Frontend interviews increasingly probe the network because the slow part of most apps is the
-wire, not React. You'll be asked "what happens when you type a URL," "explain CORS," "how does
-caching work," and "session vs JWT." All flow from the message/connection/cache model.
+Frontend interviews often ask about the network. The slow part of most apps is the
+wire, not React. You will be asked "what happens when you type a URL," "explain CORS," "how does
+caching work," and "session vs JWT." All these topics come from the message/connection/cache model.
 
 ---
 
@@ -65,8 +65,8 @@ Cookie: session=...                      <body: JSON>
 ```
 
 - **Methods:** GET (read, cacheable, no body), POST (create/side-effects), PUT/PATCH (update),
-  DELETE. "Safe" = no side effects (GET/HEAD); "idempotent" = same result if repeated (GET, PUT,
-  DELETE — not POST).
+  DELETE. "Safe" means no side effects (GET/HEAD). "Idempotent" means the same result if repeated (GET, PUT,
+  DELETE, but not POST).
 - **Status classes:** 2xx ok (200, 201, 204), 3xx redirect/cache (301, 304 Not-Modified),
   4xx client error (400, 401 unauth, 403 forbidden, 404, 429 rate-limit), 5xx server error.
 
@@ -97,7 +97,7 @@ flowchart TB
 
 ---
 
-## Caching — don't ask again
+## Caching: don't ask again
 
 ```mermaid
 sequenceDiagram
@@ -112,16 +112,16 @@ sequenceDiagram
   S-->>B: 304 Not Modified (no body) → reuse cached copy
 ```
 
-- **`Cache-Control: max-age=N`** — fresh for N seconds; serve from cache, no network. (`no-store`
-  = never cache; `no-cache` = cache but always revalidate first; `immutable` = never revalidate.)
-- **Revalidation:** when stale, send `If-None-Match: <ETag>` (or `If-Modified-Since`); server
-  replies **304** (reuse, no body) or 200 with fresh data. This is the same stale-while-revalidate
-  idea TanStack Query (Ch 10) does at the app layer.
+- **`Cache-Control: max-age=N`** means the response is fresh for N seconds. The browser serves it from cache with no network request. `no-store`
+  means never cache. `no-cache` means cache but always revalidate first. `immutable` means the resource never changes and never revalidates.
+- **Revalidation:** when the cached response is stale, the browser sends `If-None-Match: <ETag>` (or `If-Modified-Since`). The server
+  replies with **304** (reuse the cached copy, no body) or 200 with fresh data. This is the same stale-while-revalidate
+  idea that TanStack Query (Ch 10) uses at the app layer.
 - **CDN** = cache copies near users (edge) so requests don't travel to origin.
 
 ---
 
-## CORS — the browser's cross-origin rules
+## CORS: the browser's cross-origin rules
 
 Same-origin policy: by default JS can't read responses from a *different origin* (scheme+host+
 port). CORS is how a server **opts in** to allow it.
@@ -137,10 +137,10 @@ sequenceDiagram
   S-->>B: response + Access-Control-Allow-Origin
 ```
 
-- **Preflight** (`OPTIONS`) happens for non-simple requests (methods beyond GET/POST, custom
-  headers, JSON content-type) — the browser asks "am I allowed?" before sending.
-- CORS is enforced **by the browser**, for reading responses — it's not server-side security
-  (a non-browser client ignores it). A common interview clarification.
+- **Preflight** (`OPTIONS`) happens for non-simple requests. These are requests with methods beyond GET/POST, custom
+  headers, or JSON content-type. The browser asks "am I allowed?" before sending the real request.
+- CORS is enforced **by the browser** when reading responses. It is not server-side security.
+  A non-browser client ignores CORS entirely. This is a common interview clarification.
 
 ---
 
@@ -174,12 +174,12 @@ would use WS or SSE.
 **Q2. "Explain CORS and preflight."**
 > "Same-origin policy blocks JS from reading cross-origin responses unless the server opts in via
 > `Access-Control-Allow-*` headers. For non-simple requests the browser first sends an OPTIONS
-> preflight to check it's allowed. It's browser-enforced for response reading — not a server
+> preflight to check it's allowed. The browser enforces CORS for response reading. It is not a server
 > firewall."
 
 **Q3. "Session vs JWT?"**
 > "Sessions are stateful (server stores them, easy to revoke, cookie auto-sent); JWTs are
-> stateless (signed claims, server just verifies, scales, but hard to revoke — so short access +
+> stateless (signed claims, server just verifies, scales, but hard to revoke. So use short access +
 > refresh tokens). Cookie storage with HttpOnly+SameSite is safer against XSS than localStorage."
 
 *Scoring:* full = multiplexing/HOL + browser-enforced CORS + stateful-vs-stateless auth.
@@ -188,21 +188,21 @@ would use WS or SSE.
 
 ## Common Mistakes
 
-- **Thinking CORS is server security** — it's browser-enforced response-read protection.
+- **Thinking CORS is server security.** In reality, the browser enforces CORS for response-read protection.
 - **Confusing `no-cache` (revalidate) with `no-store` (never cache).**
 - **Storing JWTs in localStorage** without acknowledging XSS exposure (Ch 14).
-- **Polling when SSE/WebSocket fits** — wastes requests/battery.
-- **Assuming GET can have side effects** — it should be safe/cacheable.
+- **Polling when SSE/WebSocket fits.** Polling wastes requests and battery.
+- **Assuming GET can have side effects.** GET should be safe and cacheable.
 
 ---
 
 ## Interview Questions
 
-1. Walk "what happens when you fetch /contacts" from DNS to rendered, naming caching + connection.
-2. HTTP/1.1 vs 2 vs 3 — what HOL problem does each address?
-3. Draw the CORS preflight; what triggers it and who enforces it?
-4. `Cache-Control: max-age` vs `ETag`/304 — how do they combine?
-5. Session vs JWT; where would you store the token and what's the tradeoff?
+1. Walk "what happens when you fetch /contacts" from DNS to rendered. Name caching and connection at each step.
+2. HTTP/1.1 vs 2 vs 3. What HOL problem does each version address?
+3. Draw the CORS preflight. What triggers it and who enforces it?
+4. `Cache-Control: max-age` vs `ETag`/304. How do they work together?
+5. Session vs JWT. Where would you store the token and what is the tradeoff?
 
 ---
 
@@ -211,7 +211,7 @@ would use WS or SSE.
 1. In DevTools Network: find a 304, read `Cache-Control`/`ETag` on a static asset, and watch a
    CORS preflight (`OPTIONS`) on a cross-origin API call.
 2. Compare HTTP/2 vs 1.1 waterfall for a page with many small assets (Protocol column).
-3. In `NOTES.md`: connection-reuse ladder (1.1→2→3), cache vs revalidate, session vs JWT — one
+3. In `NOTES.md`: write the connection-reuse ladder (1.1 to 2 to 3), cache vs revalidate, and session vs JWT. One
    line each.
 
 ---
@@ -221,10 +221,10 @@ would use WS or SSE.
 - A request is a **message (method+headers+body)** over a **connection**, with a typed response.
 - **Connection reuse** is the perf arc: 1.1 keep-alive (serial) → 2 multiplexing (fixes HTTP HOL)
   → 3 QUIC/UDP (fixes TCP HOL + faster setup).
-- **Caching** avoids requests: `Cache-Control: max-age` (fresh) + `ETag`/304 (revalidate) — the
-  wire-level version of stale-while-revalidate (Ch 10); CDNs cache at the edge.
-- **CORS** is the browser enforcing same-origin, with server opt-in headers and a preflight for
-  non-simple requests — not server-side security.
+- **Caching** avoids requests: `Cache-Control: max-age` (fresh window) + `ETag`/304 (revalidate). This is the
+  wire-level version of stale-while-revalidate (Ch 10). CDNs cache copies at the edge.
+- **CORS** is the browser enforcing same-origin policy. The server sends opt-in headers, and a preflight happens for
+  non-simple requests. CORS is not server-side security.
 - **Auth:** sessions (stateful, revocable, cookie) vs JWT (stateless, scalable, short-lived +
   refresh); cookie `HttpOnly`/`SameSite` matter for XSS/CSRF (Ch 14). Real-time: WS / SSE / poll.
 

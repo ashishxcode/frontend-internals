@@ -6,7 +6,7 @@ description: "Design tokens, dark mode, responsive, cn(), shadcn/ui"
 ---
 
 
-> Builds on Ch 16 (CSS layout, cascade, specificity), Ch 11 (design systems, shadcn/ui).
+> Prerequisites: CSS layout fundamentals (flexbox, grid, positioning), cascade and specificity (how conflicting CSS rules resolve. This is key to understanding Tailwind's utility conflict resolution with tailwind-merge), and design system concepts (design tokens, component libraries, and shadcn/ui's copy-paste model vs traditional npm dependencies).
 > The JD explicitly mentions TailwindCSS + shadcn/ui. Interviewer will ask about theming, dark
 > mode, and component extraction.
 
@@ -17,8 +17,8 @@ description: "Design tokens, dark mode, responsive, cn(), shadcn/ui"
 > **Tailwind is a DESIGN TOKEN SYSTEM expressed as atomic CSS classes. Every utility is a**
 > **single CSS property-value pair. Instead of writing custom CSS that varies per component,**
 > **you compose utilities from a constrained set of design tokens (colors, spacing, type scale).**
-> **This enforces consistency by limiting the design space — you can't invent an arbitrary**
-> **margin; you pick from `m-1` through `m-96`.**
+> **This enforces consistency by limiting the design space. You cannot invent an arbitrary**
+> **margin. You pick from `m-1` through `m-96`.**
 
 From "design tokens as classes" you derive: why Tailwind eliminates the "naming things" problem
 (class names become layout concerns, not styling concerns), why it works with component-based
@@ -88,13 +88,13 @@ flowchart TB
 
 ---
 
-## 1. Configuration — The Design Token Hub
+## 1. Configuration: The Design Token Hub
 
 ```javascript
 // tailwind.config.js
 module.exports = {
   content: ['./src/**/*.{js,jsx,ts,tsx}'],
-  darkMode: 'class', // or 'media' — 'class' gives manual control
+  darkMode: 'class', // or 'media'. 'class' gives manual control
   theme: {
     extend: {
       colors: {
@@ -135,9 +135,9 @@ module.exports = {
 ### Interview answer (SDE-2)
 
 "tailwind.config.js is the single source of truth for design tokens. Colors, spacing,
-typography, breakpoints — they all live here. Components reference token names, not
+typography, breakpoints all live here. Components reference token names, not
 hardcoded values. This means changing the brand color updates every `bg-brand-500`
-across the entire app. For a white-label product like a product company, I'd use CSS custom
+across the entire app. For a white-label product like a product company, I would use CSS custom
 properties in the config (`var(--color-brand)`) so each client's theme is applied at
 the CSS layer without rebuilding Tailwind."
 
@@ -160,8 +160,8 @@ document.documentElement.classList.toggle('dark');
 
 ### Strategy: system preference vs manual toggle
 
-- `darkMode: 'media'` — respects `prefers-color-scheme: dark`. No toggle possible.
-- `darkMode: 'class'` — you control when dark class is applied. Persist in localStorage.
+- `darkMode: 'media'` respects `prefers-color-scheme: dark`. No toggle possible.
+- `darkMode: 'class'` lets you control when dark class is applied. Persist in localStorage.
 
 ### Multi-theme (white-label)
 
@@ -237,7 +237,7 @@ theme: {
 
 ## 4. Arbitrary Values & `@apply`
 
-### Arbitrary values — escape hatch
+### Arbitrary values: escape hatch
 
 ```jsx
 // When the design token doesn't exist
@@ -247,7 +247,7 @@ theme: {
 Use sparingly. Every arbitrary value is a design inconsistency risk. If you use a value more
 than twice, add it to the config.
 
-### @apply — anti-pattern in most cases
+### @apply: anti-pattern in most cases
 
 ```css
 .btn-primary {
@@ -255,8 +255,8 @@ than twice, add it to the config.
 }
 ```
 
-**Warning**: `@apply` recreates the exact problem Tailwind solves — now you have CSS class
-names again, and you lose the visibility of what styles are applied. Only use `@apply` for:
+**Warning**: `@apply` recreates the exact problem Tailwind solves. Now you have CSS class
+names again. You lose the visibility of what styles are applied. Only use `@apply` for:
 
 - Third-party library overrides (can't change JSX)
 - Global base styles (`@layer base`)
@@ -280,9 +280,9 @@ function ButtonPrimary({ children }) {
 
 ## 5. clsx, tailwind-merge, cn()
 
-This is a common interview topic — how to compose conditional classes in React.
+This is a common interview topic. How do you compose conditional classes in React?
 
-### clsx — conditional class joining
+### clsx: conditional class joining
 
 ```javascript
 import clsx from 'clsx';
@@ -302,7 +302,7 @@ function Button({ variant = 'primary', size = 'md', disabled }) {
 }
 ```
 
-### tailwind-merge — intelligent conflict resolution
+### tailwind-merge: conflict resolution
 
 ```javascript
 import { twMerge } from 'tailwind-merge';
@@ -312,7 +312,7 @@ twMerge('bg-red-500', 'bg-blue-600');
 // → 'bg-blue-600' as expected, not both
 ```
 
-### cn() — the shadcn convention
+### cn(): the shadcn convention
 
 ```javascript
 import { clsx } from 'clsx';
@@ -335,8 +335,8 @@ className={`bg-red-500 ${isActive && 'bg-blue-600'}`}
 ```
 
 Template literals produce both classes, but CSS specificity doesn't help when both have the
-same specificity — the order in the stylesheet matters, not the order in the string. `twMerge`
-correctly resolves this by keeping only the last conflicting utility.
+same specificity. The order in the stylesheet matters, not the order in the string. `twMerge`
+correctly solves this by keeping only the last conflicting utility.
 
 ---
 
@@ -349,8 +349,8 @@ you COPY into your project. This is a fundamentally different model.
 
 | npm dependency | shadcn/ui |
 |---|---|
-| Version locked to what you installed | You own every line — modify freely |
-| Upgrading = breaking changes | No upgrade needed — you control changes |
+| Version locked to what you installed | You own every line. Modify freely |
+| Upgrading = breaking changes | No upgrade needed. You control changes |
 | Bundle includes everything | Only what you copy |
 | Hard to customize internals | Full source access, no black box |
 
@@ -421,7 +421,7 @@ content: ['./src/**/*.{js,jsx,ts,tsx}'],
 // Only classes found in these files survive in production build
 ```
 
-### Dynamic classes — WARNING
+### Dynamic classes: WARNING
 
 ```jsx
 // ❌ Tailwind can't tree-shake this — "text-" is a string fragment
@@ -467,7 +467,7 @@ colors: {
 }
 ```
 
-Each client gets `:root { --color-primary: #3b82f6; }` — no rebuild needed.
+Each client gets `:root { --color-primary: #3b82f6; }`. No rebuild needed.
 
 ---
 
@@ -476,32 +476,32 @@ Each client gets `:root { --color-primary: #3b82f6; }` — no rebuild needed.
 ### Q: Why Tailwind over styled-components / CSS Modules?
 
 "The key difference is constraint. Styled-components gives you infinite CSS power per
-component — which means every component can invent its own spacing, colors, and type scale.
-Over time, the UI drifts. Tailwind constrains you to a design token system enforced at the
+component. This means every component can invent its own spacing, colors, and type scale.
+Over time, the UI drifts. Tailwind keeps you inside a design token system enforced at the
 build level. Combined with component encapsulation in React, you get the best of both:
-per-component styling decisions that can't break the global design system."
+per-component styling choices that cannot break the global design system."
 
 ### Q: How do you handle responsive design in Tailwind?
 
 "Mobile-first with breakpoint prefixes. I build the mobile layout first (no prefix), then
-add `sm:`, `md:`, `lg:` overrides. This matches the browser's natural behavior — mobile
-styles are the base, desktop is the enhancement. The rare case is a desktop-only component
-where I need a mobile override — that's `max-md:hidden` for hiding on mobile."
+add `sm:`, `md:`, `lg:` overrides. This matches the browser's natural behavior. Mobile
+styles are the base. Desktop is the enhancement. The rare case is a desktop-only component
+where I need a mobile override. That is `max-md:hidden` for hiding on mobile."
 
 ### Q: What is `cn()` and why does shadcn use it?
 
 "cn is clsx + tailwind-merge. clsx handles conditional class joining (arrays, objects,
-ternaries). tailwind-merge resolves conflicting Tailwind utilities — if a consumer passes
+ternaries). tailwind-merge resolves conflicting Tailwind utilities. If a consumer passes
 `className="bg-red-500"` and the component internally has `bg-blue-600`, twMerge keeps the
-consumer's class. Without it, both classes would apply and the CSS cascade order would
-determine the winner, which is unpredictable across build outputs."
+consumer's class. Without it, both classes would apply, and the CSS cascade order would
+decide the winner. That behavior is unpredictable across build outputs."
 
 ### Q: How would you handle white-label theming in Tailwind?
 
-"I'd use CSS custom properties in tailwind.config.js: `colors: { brand: 'var(--color-brand)' }`.
+"I would use CSS custom properties in tailwind.config.js: `colors: { brand: 'var(--color-brand)' }`.
 Each client loads a stylesheet that sets `--color-brand`, `--color-surface`, etc. on `:root`.
-Tailwind generates classes for `var()` references — no rebuild needed for new clients.
-The component code stays identical across clients; only the CSS custom properties change."
+Tailwind generates classes for `var()` references. No rebuild needed for new clients.
+The component code stays the same across clients. Only the CSS custom properties change."
 
 ---
 

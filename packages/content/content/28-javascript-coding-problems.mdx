@@ -6,8 +6,8 @@ description: "Debounce, throttle, deep clone, Promise.all, memoize"
 ---
 
 
-> Builds on Ch 01 (closures, memory, execution context), Ch 02 (event loop, promises, async/await).
-> The whiteboard/coderpad round — implement these from scratch, no lodash, no libraries.
+> Prerequisites: closures (functions that retain access to variables from outer scope even after outer function returns), setTimeout (schedules a callback after delay), event loop (JavaScript processes microtasks before macrotasks. This affects async utility behavior), Promise (object representing eventual completion/failure of async operation), and value vs reference (primitives copy by value. Objects copy by reference. This decides your clone strategy).
+> The whiteboard/coderpad round. Implement these from scratch, no lodash, no libraries.
 
 ---
 
@@ -16,10 +16,10 @@ description: "Debounce, throttle, deep clone, Promise.all, memoize"
 > **Every coding problem tests whether you understand the raw primitives JavaScript gives you:**
 > **closure (remember variables across calls), time (delay/cancel execution), iteration,**
 > **promise creation/composition, and value vs reference. If you can re-derive the utility from**
-> **those primitives, you never need to memorize the implementation — you build it from scratch**
+> **those primitives, you never need to memorize the code. You build it from scratch**
 > **by asking "what primitives does this problem need?"**
 
-From "what primitives does this problem need" you derive: debounce needs closure + setTimeout,
+From "what primitives does this problem need" you can figure out: debounce needs closure + setTimeout,
 throttle needs closure + time comparison, deep clone needs recursion + type checks,
 Promise.all needs array iteration + resolve/reject tracking.
 
@@ -27,11 +27,11 @@ Promise.all needs array iteration + resolve/reject tracking.
 
 ## Learning Objectives
 
-1. Implement debounce and throttle from scratch — and explain the difference
-2. Implement deep clone handling all edge types (Date, RegExp, Map, Set, circular refs)
+1. Implement debounce and throttle from scratch. Explain the difference
+2. Implement deep clone handling all special types (Date, RegExp, Map, Set, circular refs)
 3. Implement Promise.all, Promise.race, Promise.allSettled from scratch
 4. Implement array utilities: flatten, groupBy, unique, chunk
-5. Implement memoize/caching with LRU eviction
+5. Implement memoize/caching with LRU removal
 6. Implement async flow control: series, parallel, pool, retry, timeout
 
 ---
@@ -41,10 +41,10 @@ Promise.all needs array iteration + resolve/reject tracking.
 - **Closure is a backpack.** A function remembers the variables that were in scope when it
   was created. Every util below (debounce, throttle, memoize) uses closure as its state.
 - **JavaScript is single-threaded but async.** Promise and setTimeout let you schedule work.
-  Understanding the event loop order (Ch 02) is essential for async utilities.
-- **Value vs reference determines clone strategy.** Primitives copy by value; objects by
-  reference. Deep clone needs to traverse the reference graph and copy at every node.
-- **Recursion needs a termination condition.** Every recursive problem (flatten, deep clone)
+  The event loop processes microtasks (Promise callbacks) before macrotasks (setTimeout, DOM events). Understanding this order is essential for async utilities.
+- **Value vs reference decides your clone strategy.** Primitives copy by value. Objects copy by
+  reference. Deep clone needs to walk through the reference graph and copy at every node.
+- **Recursion needs a stopping condition.** Every recursive problem (flatten, deep clone)
   must know when to stop recursing.
 
 ---
@@ -157,7 +157,7 @@ flowchart LR
 Instead of resetting a timer (debounce), throttle checks if enough time has passed since the
 last execution. If yes, execute and update the timestamp. If no, schedule for later or skip.
 
-### Implementation (timestamp version — fires immediately)
+### Implementation (timestamp version, fires immediately)
 
 ```javascript
 function throttle(fn, limit) {
@@ -172,7 +172,7 @@ function throttle(fn, limit) {
 }
 ```
 
-### Implementation (trailing edge — fires at end of burst)
+### Implementation (trailing edge, fires at end of burst)
 
 ```javascript
 function throttle(fn, limit) {
@@ -200,7 +200,7 @@ function throttle(fn, limit) {
 }
 ```
 
-### Debounce vs Throttle — interview table
+### Debounce vs Throttle interview table
 
 | | Debounce | Throttle |
 |---|---|---|
@@ -296,22 +296,22 @@ function deepClone(value, seen = new WeakMap()) {
 - **Symbol keys**: `Object.getOwnPropertySymbols()` captures them; `Object.keys()` doesn't.
 - **Prototype chain**: `Object.create(Object.getPrototypeOf(value))` preserves inheritance.
 - **Typed arrays / ArrayBuffer**: Special-case these for completeness.
-- **Functions**: Usually shared by reference in practice — but could compile anew.
+- **Functions**: Usually shared by reference in practice. But you could compile anew.
 
 ### Interview answer (SDE-2)
 
-"Deep clone recursively traverses the object graph and replicates every value. The challenge
-is handling types: Date, RegExp, Map, Set all need their own construction strategy. Circular
-references require a WeakMap cache — without it, you get infinite recursion. The WeakMap
-stores already-cloned objects; when the clone encounters the same reference again, it returns
+"Deep clone walks through the object graph and copies every value. The challenge
+is handling types: Date, RegExp, Map, Set all need their own way to build new copies. Circular
+references need a WeakMap cache. Without it, you get infinite recursion. The WeakMap
+stores objects you already cloned. When the clone sees the same reference again, it returns
 the cached clone. For production, `structuredClone()` (available in modern browsers and Node
-17+) handles all this natively and is faster than any hand-rolled implementation."
+17+) handles all this natively and is faster than any hand-written code."
 
 ---
 
 ## 4. Promise.all, Promise.race, Promise.allSettled
 
-### Promise.all — wait for all, fail fast
+### Promise.all (wait for all, fail fast)
 
 ```javascript
 function promiseAll(iterable) {
@@ -336,7 +336,7 @@ function promiseAll(iterable) {
 }
 ```
 
-### Promise.race — first settled wins
+### Promise.race (first settled wins)
 
 ```javascript
 function promiseRace(iterable) {
@@ -348,7 +348,7 @@ function promiseRace(iterable) {
 }
 ```
 
-### Promise.allSettled — wait for all, collect results
+### Promise.allSettled (wait for all, collect results)
 
 ```javascript
 function promiseAllSettled(iterable) {
@@ -375,7 +375,7 @@ function promiseAllSettled(iterable) {
 ### Key insight
 
 `Promise.all` and `Promise.race` use the **reject handler directly** (`reject` as second
-`.then` arg) to fail fast. `Promise.allSettled` never rejects — it always resolves with
+`.then` arg) to fail fast. `Promise.allSettled` never rejects. It always resolves with
 an array of `{ status, value/reason }` objects.
 
 ### Real-world
@@ -493,11 +493,11 @@ function chunk(arr, size) {
 ### Interview answer (SDE-2)
 
 "Array utilities are reduce and recursion puzzles. Flatten recursively or iteratively
-with a stack — the iterative approach avoids call-stack limits for deeply nested data.
+with a stack. The iterative approach avoids call-stack limits for deeply nested data.
 GroupBy is a single reduce with a Map accumulator. Chunk is slice in a loop. The key
 question is always: 'what if the array is empty, what if all items map to the same key,
-what if size is larger than the array length?' — that's what separates careful from
-careless implementations."
+what if size is larger than the array length?' That question separates careful from
+careless code."
 
 ---
 
@@ -512,7 +512,7 @@ fibonacci(40); // expensive
 fibonacci(40); // expensive again — same input, wasted work
 ```
 
-### Mental model — closure over a cache
+### Mental model: closure over a cache
 
 ```mermaid
 flowchart TB
@@ -550,7 +550,7 @@ function memoize(fn) {
 
 ### LRU Cache (interview favorite)
 
-Least Recently Used eviction — when the cache exceeds `maxSize`, drop the oldest entry.
+Least Recently Used removal. When the cache exceeds `maxSize`, drop the oldest entry.
 
 ```javascript
 function memoizeLRU(fn, maxSize = 100) {
@@ -579,12 +579,12 @@ function memoizeLRU(fn, maxSize = 100) {
 ### Interview answer (SDE-2)
 
 "Memoize trades memory for CPU. The wrapper function stores results in a closure-held cache
-keyed by serialized arguments. On every call, check the cache first — if hit, return
-immediately; if miss, compute, store, return. The key challenge is argument serialization:
+keyed by serialized arguments. On every call, check the cache first. If hit, return
+immediately. If miss, compute, store, return. The key challenge is argument serialization:
 `JSON.stringify` works for primitives and plain objects but fails for `undefined`, functions,
-Symbols, and circular references. A robust memoize uses a `Map` of argument tuples or a
-custom key function. LRU eviction prevents memory leaks by dropping the oldest entry when
-the cache exceeds a size limit — implemented with `Map`'s insertion-order guarantee."
+Symbols, and circular references. A strong memoize uses a `Map` of argument tuples or a
+custom key function. LRU removal stops memory leaks by dropping the oldest entry when
+the cache exceeds a size limit. It uses `Map`'s insertion-order guarantee."
 
 ---
 
@@ -722,7 +722,7 @@ curriedAdd(1, 2)(3); // 6
 
 ---
 
-## Interview Cheatsheet — Top 10 Coding Problems
+## Interview Cheatsheet: Top 10 Coding Problems
 
 | Problem | Primitive | Key edge cases |
 |---|---|---|
@@ -742,8 +742,8 @@ curriedAdd(1, 2)(3); // 6
 ## Summary
 
 > **The 6 primitives: closure, setTimeout, recursion, Promise, Map, reduce.**
-> Every coding problem reduces to composing these. Don't memorize implementations —
-> practice deriving them from primitives while narrating edge cases aloud.
+> Every coding problem comes down to using these together. Do not memorize code.
+> Practice building them from primitives while talking through special cases aloud.
 
 ---
 
@@ -752,7 +752,7 @@ curriedAdd(1, 2)(3); // 6
 1. Implement `debounce` with `leading` option that fires immediately on first call
 2. Implement `throttle` that guarantees at least one trailing edge call
 3. Implement `Promise.any` (first fulfilled, aggregate error if all reject)
-4. Implement deep clone using `structuredClone` — compare with your hand-rolled version
+4. Implement deep clone using `structuredClone`. Compare with your hand-written version
 5. Implement LRU cache with `get` and `set` methods (not just memoize)
 6. Implement `asyncPool` that limits concurrency of fetch calls
 7. Implement `pipeAsync` for async functions: `pipeAsync(fetchUser, parseJSON, validate)`

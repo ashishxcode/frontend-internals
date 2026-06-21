@@ -5,106 +5,65 @@ part: "JavaScript Runtime"
 description: "Execution context, call stack, heap, closures, memory model"
 ---
 
-
-> Format note: this chapter is the worked example of the teaching style in
-> `PROJECT_INSTRUCTIONS.md`. Every later chapter copies this shape.
-
----
-
-## Learning Objectives
-
-By the end of this chapter you should be able to reason from first principles about:
-
-1. **Why** a runtime needs an *execution context* at all — what breaks without it.
-2. Why memory is split into a **call stack** and a **heap**, and what lives where.
-3. The difference between **primitive (by-value)** and **reference (by-reference)** bindings,
-   at the memory level — not as a rule, but as a consequence of the two-region model.
-4. The **scope chain** as a lookup mechanism the engine builds, not magic.
-5. **Closures** as a memory-lifetime consequence: why an inner function keeps a variable
-   alive after its outer function has already returned and its stack frame is gone.
-
-These five models are the foundation. Chapter 2 (event loop) assumes all of them.
-
----
-
-## Key Mental Models
-
-- **An execution context is a bookkeeping record.** The engine cannot "just run code" — it
-  needs to know *which variables are visible, what `this` is, and where to return to*. That
-  record is the execution context.
-- **Stack = ordered, short-lived, known-size frames. Heap = unordered, long-lived, dynamic
-  objects.** Their lifetimes differ, so they live in different regions.
-- **Variables hold either a value or an address.** Primitives hold the value directly;
-  objects hold an address pointing into the heap. Every "copy" question reduces to: *did we
-  copy the value or the address?*
-- **The scope chain is a chain of references to parent contexts**, fixed at definition time
-  (lexical), resolved at lookup time.
-- **A closure is just a function plus a live reference to a scope that would otherwise have
-  been garbage-collected.** Nothing more mysterious than that.
-
----
-
-## Introduction
-
-You already write JavaScript daily. This chapter is not about syntax. It is about building
-the *machine model* in your head — the model the V8/JavaScriptCore engineers actually
-implemented — so that closures, `this`, async, hoisting, and (later) React's hook system
-stop being a list of rules and become *predictions you can derive*.
-
-We build strictly bottom-up. Every later chapter (event loop, Fiber, hooks, stale closures)
-is a re-application of the models below. Get these right and the rest is downhill.
-
----
-
 ## Problem
 
-Start with the problem, never the definition.
+You ship a CRM dashboard. Your team has a table component that fetches 500 rows, each row has an "expand" button. User clicks row 42. Nothing happens. DevTools shows `Maximum call stack size exceeded`. Where did this come from?
 
-**Problem 1 — running nested function calls.**
-Consider what the engine must physically do here:
+You had a recursive filter that walked a deeply nested customer hierarchy. A customer had 8000 sub-accounts. Recursion went 8000 levels deep. The engine ran out of stack.
+
+Now zoom out to the engine level. Two problems the runtime must solve for every script you ship:
+
+**Problem 1: Nested function calls need a pause-and-resume system.**
 
 ```js
-function a() { return b() + 1; }
-function b() { return c() + 1; }
-function c() { return 1; }
-a();
+function renderHeader() { return renderLogo() + renderSearch(); }
+function renderLogo() { return "<img src=logo.png>"; }
+function renderSearch() { return "<input>"; }
+renderHeader();
 ```
 
-When `a` calls `b`, the engine must *pause* `a`, remember "when `b` finishes, come back to
-the `+ 1` in `a`", run `b`, and so on. It needs somewhere to store:
+When `renderHeader` calls `renderLogo`, the engine must pause `renderHeader`. It must remember: "after `renderLogo` finishes, go back to `renderLogo() + renderSearch()` and evaluate the `+`." Then it runs `renderLogo`. Then it needs to remember where it was in `renderHeader` after `renderLogo` returned. So it needs to store:
 
-- where to resume each paused function (the **return address**),
-- each call's own local variables (`a`'s locals must not clobber `b`'s).
+- Where to resume each paused function (the return address).
+- Each call's own local variables (`renderHeader`'s template literal must not overwrite `renderLogo`'s).
 
-It needs a **last-in, first-out** structure: the most recently called function is the first
-to finish. That structure is the **call stack**. The per-call record pushed onto it is an
-**execution context** (a.k.a. stack frame).
+It needs a last-in, first-out structure. The most recently called function finishes first. That structure is the call stack.
 
-> Why existing solutions failed: a flat, single set of variables (like early BASIC) can't
-> support recursion or re-entrancy — `c`'s locals would overwrite `a`'s. The stack-of-
-> contexts model exists specifically to give every call its own private slot of memory and
-> its own return address.
-
-**Problem 2 — objects outlive the call that created them.**
+**Problem 2: Objects must outlive the call that created them.**
 
 ```js
-function makeUser() {
-  const u = { name: "Ada" };
-  return u;
+function createWidget(config) {
+  const widget = { id: config.id, state: "idle", subscribers: [] };
+  return widget;
 }
-const user = makeUser();
+const mainWidget = createWidget({ id: "chart-1" });
 ```
 
-`makeUser`'s stack frame is destroyed the instant it returns. But `user` must survive. So
-the object **cannot** live in the stack frame — it would be wiped. It must live somewhere
-whose lifetime is independent of any single call. That somewhere is the **heap**.
+`createWidget`'s call frame is destroyed the instant it returns. But `mainWidget` must survive. The object cannot live in the stack frame. It would be wiped. It must live somewhere whose lifetime is independent of any single call. That somewhere is the heap.
 
-This is the entire reason for the two-region split. It is not an arbitrary implementation
-detail; it falls directly out of *"some data outlives the call that made it, some doesn't."*
+This is the entire reason for the two-region memory split. It is not an arbitrary implementation detail. It falls directly out of "some data outlives the call that made it, some does not."
+
+---
+
+## Why Existing Solution Failed
+
+Early languages (BASIC, early Fortran) used a flat, single set of variable slots. Every function wrote to the same global pool of named variables. This worked for simple scripts. It broke immediately on two requirements:
+
+**Recursion.** If function `A` calls itself, the second invocation's locals overwrite the first invocation's. Try computing factorial without recursion support. You need each invocation to have its own private copy of `n` and `result`.
+
+**Re-entrancy.** If `A` calls `B` which calls `A`, three invocations exist simultaneously. A flat variable model cannot distinguish `A`'s first `count` from `A`'s second `count`. They collide.
+
+The stack-of-contexts model solved both. Each call gets its own private frame. The frame holds locals, return address, and a link to the caller. Frames are ordered by call order, not by name. The "stack" name comes from this LIFO ordering: the last call pushed is the first one popped.
+
+The heap solved the second problem. Objects with lifetimes independent of the creating call needed their own region. The heap is garbage-collected: an object lives until nothing references it. This decouples object lifetime from function call lifetime.
 
 ---
 
 ## Mental Model
+
+Picture the JavaScript engine as a workshop with two tables. The **stack** is a narrow desk where you work on one task at a time, stacking papers for tasks you paused. Each paper (frame) lists local variables and where to go when done. The **heap** is a warehouse where you store objects that many tasks might need. You do not put warehouse items on the desk they would clutter it. You put a note card (address) on the desk pointing to the warehouse shelf.
+
+**One sentence: The stack tracks who called whom. The heap holds what outlives the call. Closures are what happens when the heap keeps a stack frame alive.**
 
 ```
             JavaScript Engine memory
@@ -112,415 +71,63 @@ detail; it falls directly out of *"some data outlives the call that made it, som
  │          CALL STACK       │             HEAP              │
  │  (ordered, LIFO, small)   │   (unordered, dynamic, large) │
  ├───────────────────────────┼───────────────────────────────┤
- │  frame: c()               │   { name: "Ada" }   ← objects │
- │  frame: b()               │   [1, 2, 3]                   │
- │  frame: a()               │   function bodies, closures   │
+ │  frame: renderSearch()    │   { id: "chart-1" }           │
+ │  frame: renderLogo()      │   [1, 2, 3]                   │
+ │  frame: renderHeader()    │   function bodies, closures   │
  │  frame: global()          │                               │
  └───────────────────────────┴───────────────────────────────┘
    holds primitives + addresses     holds the actual objects
 ```
 
-**Rules that fall out of this picture:**
+Three rules fall out of this picture:
 
-- A variable binding lives in a **frame** on the stack.
-- If its value is a **primitive** (`number`, `string`, `boolean`, `null`, `undefined`,
-  `symbol`, `bigint`), the value sits *directly* in the frame slot.
-- If its value is an **object** (`{}`, `[]`, function), the frame slot holds an **address**;
-  the object itself sits in the heap.
-- When a frame pops, its slots vanish. Heap objects only vanish later, when the garbage
-  collector proves nothing references them anymore.
+- A variable binding lives in a frame on the stack.
+- If its value is a primitive (number, string, boolean, null, undefined, symbol, bigint), the value sits directly in the frame slot.
+- If its value is an object (object literal, array, function), the frame slot holds an address. The object itself sits in the heap.
 
-**Execution context, precisely.** Each context carries three things:
-1. **Variable Environment** — its local bindings (`var`/`let`/`const`, params, function
-   declarations).
-2. **Scope chain reference** — a pointer to the *outer* (lexical) environment, for lookups.
-3. **`this` binding** — determined by how the function was called.
+When a frame pops, its slots vanish. Heap objects only vanish later, when the garbage collector proves nothing references them anymore.
 
 ---
 
 ## Visualization
 
-Trace `a() → b() → c()` step by step. Watch the stack grow then unwind.
+Trace `renderHeader() → renderLogo() → return` step by step. Watch the stack grow then unwind.
 
 ```
-1) Global context created, a() called
-   STACK:                      2) a calls b              3) b calls c
-   ┌──────────┐                ┌──────────┐               ┌──────────┐
-   │  a()     │ ◀ top          │  b()     │ ◀ top         │  c()     │ ◀ top
-   ├──────────┤                ├──────────┤               ├──────────┤
-   │ global   │                │  a()     │               │  b()     │
-   └──────────┘                ├──────────┤               ├──────────┤
-                               │ global   │               │  a()     │
-                               └──────────┘               ├──────────┤
-                                                          │ global   │
-                                                          └──────────┘
+1) Global context, renderHeader() called
+   STACK:                      2) renderHeader calls renderLogo
+   ┌──────────────────┐        ┌──────────────────┐
+   │ renderHeader()   │ top    │ renderLogo()     │ top
+   ├──────────────────┤        ├──────────────────┤
+   │ global           │        │ renderHeader()   │
+   └──────────────────┘        ├──────────────────┤
+                               │ global           │
+                               └──────────────────┘
 
-4) c returns 1 → c popped   5) b returns 2 → b popped   6) a returns 3 → a popped
-   ┌──────────┐                ┌──────────┐               ┌──────────┐
-   │  b()     │ ◀ top          │  a()     │ ◀ top         │ global   │ ◀ top
-   ├──────────┤                ├──────────┤               └──────────┘
-   │  a()     │                │ global   │
-   ├──────────┤                └──────────┘
-   │ global   │
-   └──────────┘
+3) renderLogo returns <img>   4) renderHeader resumes, calls renderSearch
+   ┌──────────────────┐        ┌──────────────────┐
+   │ renderHeader()   │ top    │ renderSearch()   │ top
+   ├──────────────────┤        ├──────────────────┤
+   │ global           │        │ renderHeader()   │
+   └──────────────────┘        ├──────────────────┤
+                               │ global           │
+                               └──────────────────┘
+
+5) renderSearch returns       6) renderHeader returns final string
+   ┌──────────────────┐        ┌──────────────────┐
+   │ renderHeader()   │ top    │ global           │ top
+   ├──────────────────┤        └──────────────────┘
+   │ global           │
+   └──────────────────┘
 ```
 
-The "stack" in *stack overflow* and in a stack trace is literally this structure. A runaway
-recursion never pops, frames pile up, and the engine aborts: `Maximum call stack size
-exceeded`.
+The "stack" in stack overflow and in a stack trace is literally this structure. A runaway recursion never pops. Frames pile up until the engine aborts: `Maximum call stack size exceeded`.
 
----
-
-## Engine Simulation
-
-Now the real payoff. Walk the engine through code that touches **all five models**:
-primitive vs reference, scope chain, and a closure that outlives its frame.
-
-```js
-const tax = 0.2;                    // (A) global primitive
-
-function makeAccount(name) {        // (B)
-  let balance = 100;                // (C) primitive, local to this call
-  const owner = { name };           // (D) object → heap
-
-  function deposit(amount) {        // (E) closes over balance + owner
-    balance = balance + amount;
-    return balance;
-  }
-
-  return deposit;                   // (F) return the inner function
-}
-
-const d = makeAccount("Ada");       // (G)
-d(50);                              // (H) → 150
-d(25);                              // (I) → 175
-```
-
-### Step G — `makeAccount("Ada")` is called
-
-A new execution context for `makeAccount` is pushed. Its Variable Environment holds
-`name`, `balance`, `owner`, `deposit`. The object `{ name: "Ada" }` is allocated in the
-**heap**; `owner` holds its address.
-
-```
-STACK                                  HEAP
-┌────────────────────────────┐         ┌───────────────────────┐
-│ makeAccount("Ada")         │         │ #h1 { name: "Ada" }   │◀┐
-│   name    = "Ada"          │         │                       │ │
-│   balance = 100            │         │ #h2 <fn deposit>      │◀┼┐
-│   owner   = ──────────────────────────▶ (addr #h1)          │ ││
-│   deposit = ──────────────────────────▶ (addr #h2)          │ ││
-├────────────────────────────┤         └───────────────────────┘ ││
-│ global                     │                                    ││
-│   tax = 0.2                │   deposit's [[Scope]] ─────────────┘│
-│   makeAccount = <fn>       │   points back to makeAccount's env ─┘
-│   d = <uninitialized>      │
-└────────────────────────────┘
-```
-
-Key point: when the engine *creates* the `deposit` function object (#h2), it stamps onto it
-a hidden reference — `[[Scope]]` / `[[Environment]]` — to the environment it was **defined**
-in (makeAccount's). This stamping happens at definition time. That is **lexical scope**: the
-chain is fixed by *where the function is written*, not where it is later called.
-
-### Step F/G — `makeAccount` returns; its frame pops
-
-`makeAccount` returns the address of `deposit` (#h2). `d` (in global) now holds #h2. The
-`makeAccount` frame is popped off the stack.
-
-**Here is the crucial moment.** Normally, when a frame pops, its locals (`balance`, `owner`)
-are gone. But `deposit` (#h2) still holds a reference to makeAccount's environment. So the
-garbage collector **cannot** reclaim that environment — something live still points at it.
-The environment is detached from the stack but kept alive on the heap.
-
-```
-STACK                          HEAP
-┌──────────────────────┐       ┌──────────────────────────────────────┐
-│ global               │       │ #h1 { name: "Ada" }                  │
-│   tax = 0.2          │       │ #h2 <fn deposit>                     │
-│   makeAccount = <fn> │       │ #h3 [closed-over env]  ◀──────────┐  │
-│   d = ───────────────────────▶ (addr #h2)                        │  │
-└──────────────────────┘       │       balance = 100              │  │
-                               │       owner   = #h1              │  │
-   d's frame is gone, but      │   #h2.[[Scope]] ─────────────────┘  │
-   #h3 survives because #h2    └──────────────────────────────────────┘
-   still references it = CLOSURE
-```
-
-That surviving box (#h3) **is the closure**. A closure is not a special language feature
-bolted on top; it is the *natural consequence* of two facts already established:
-(1) functions carry a reference to their defining environment, and (2) the GC keeps alive
-anything still referenced. The environment simply migrates from stack-managed to
-heap-managed lifetime.
-
-### Step H — `d(50)`
-
-A new frame for `deposit` is pushed. It needs `balance`. `balance` is **not** in deposit's
-own environment, so the engine walks the **scope chain**: deposit's env → (via `[[Scope]]`)
-→ the closed-over env (#h3), where it finds `balance = 100`. Updates it to `150`. Returns.
-Frame pops — but #h3 persists, so the new `balance` of 150 is remembered.
-
-```
-deposit(50) frame                lookup walk for `balance`:
-┌──────────────────┐             deposit.env  →  miss
-│ amount = 50      │             #h3 (closure) →  HIT (balance = 100 → 150)
-│ [[Scope]] ─────────────────────────────────────────┘
-└──────────────────┘
-```
-
-### Step I — `d(25)`
-
-Same walk. `balance` is now `150` (the closure persisted it), becomes `175`. This is why two
-calls to the *same* returned function accumulate state — they share one closed-over `balance`
-cell, not a fresh one each time.
-
-> **This single simulation is the seed of much later material.** A React `useState` hook
-> closes over its setter and value the same way; a "stale closure" bug (Chapter 5) is exactly
-> a `deposit` that captured an *old* environment cell. You now have the model to derive that
-> instead of memorizing it.
-
----
-
-## Primitive vs Reference — derived, not memorized
-
-People memorize "primitives are copied by value, objects by reference." Derive it instead
-from the stack/heap picture:
-
-```js
-let x = 10;
-let y = x;        // copy the VALUE 10 into y's slot
-y = 20;
-// x is still 10 — separate slots, separate values
-
-let a = { n: 1 };
-let b = a;        // copy the ADDRESS into b's slot
-b.n = 2;
-// a.n is now 2 — both slots hold the SAME address → same heap object
-```
-
-```
-PRIMITIVE                         REFERENCE
-STACK                             STACK            HEAP
-┌───────────┐                     ┌───────────┐    ┌──────────┐
-│ x = 10    │                     │ a = #h9 ─────────▶ {n: 2} │
-│ y = 20    │ (independent)       │ b = #h9 ─────────▶ (same) │
-└───────────┘                     └───────────┘    └──────────┘
-```
-
-"Pass by value vs reference" dissolves: JavaScript is *always* pass-by-value — but for
-objects, the *value being passed is an address*. Reassigning the parameter doesn't affect
-the caller; mutating the pointed-to object does.
-
----
-
-## React Internals (forward link)
-
-You don't know Fiber yet, so just plant the hooks (pun intended):
-
-- React's `useState` returns a value and a setter that **close over** the current Fiber and
-  hook slot — same closure mechanism simulated above.
-- A **stale closure** bug (an event handler that reads an old `count`) is a `deposit` holding
-  an old environment cell. Chapter 5 derives it from this exact model.
-- Reference identity (`{}` !== `{}`) is *why* `useMemo`/`useCallback` and dependency arrays
-  exist — they exist to keep an **address stable across renders** so referential-equality
-  checks don't see "a new object every time." That's the primitive-vs-reference model again.
-
-We will return to each of these and *derive* them, never assert them.
-
----
-
-## Interview Discussion (force-reasoning mode)
-
-> Use this section as a drill. Read the question, answer **out loud before reading on**,
-> then compare against the correction.
-
-**Q1. "Where does the object `{ name: 'Ada' }` live, and when is it freed?"**
-
-*Plausible-but-wrong student answer:* "It lives in the `makeAccount` function and is freed
-when `makeAccount` returns."
-
-*Correction:* Half right, half wrong. The **binding** `owner` lives in makeAccount's frame,
-yes — but the **object itself** lives in the heap. It is freed *not* when makeAccount returns
-but when the GC proves nothing references it. Here, the closure still references it, so it
-survives long after the frame is gone. The misconception comes from conflating *the variable*
-(stack, short-lived) with *the object* (heap, lifetime = reachability).
-
-**Model answer:** "The binding lives in the call's stack frame; the object lives in the heap.
-The frame dies on return, but the object is only collected once it's unreachable. Here the
-returned closure keeps the environment — and therefore the object — reachable, so it persists
-across calls."
-
----
-
-**Q2. "Why does calling `d(50)` then `d(25)` give 175 and not 125?"**
-
-*Plausible-but-wrong:* "Because `balance` is a global variable."
-
-*Correction:* `balance` is **not** global — it's local to a *single invocation* of
-`makeAccount`. The reason both calls accumulate is that both `deposit` invocations resolve
-`balance` through the **same** closed-over environment cell (#h3), created by that one
-`makeAccount("Ada")` call. Call `makeAccount` again and you'd get a *fresh, independent*
-balance. The misconception is assuming shared state implies global state; here it's
-*per-closure* state.
-
-**Model answer:** "Each `makeAccount` call creates one environment. The returned `deposit`
-closes over it. Repeated calls to that same `deposit` mutate the same `balance` cell, so they
-accumulate. A second `makeAccount` call would produce a separate cell."
-
----
-
-**Q3. "Is JavaScript pass-by-value or pass-by-reference?"**
-
-*Plausible-but-wrong:* "Pass-by-reference for objects, pass-by-value for primitives."
-
-*Correction:* It's **always pass-by-value** — the value passed for an object just happens to
-be a *reference (address)*. Test: reassigning the parameter inside the function never affects
-the caller's variable (that would require true pass-by-reference). Mutating the object does,
-because both names hold the same address. Sloppy phrasing causes the misconception.
-
-**Model answer:** "Always by value. For objects the value is an address, so mutation is
-visible to the caller but reassignment is not. There is no true pass-by-reference in JS."
-
-*Scoring guide:* full marks = names stack/heap, distinguishes binding from object, and gives
-the reassign-vs-mutate test. Partial = correct conclusion, hand-wavy mechanism. Fail = "by
-reference for objects" with no test.
-
----
-
-## Common Mistakes
-
-- **Conflating the variable with the object.** The variable is a slot; the object is heap
-  data. "Freed when the function returns" is true of the slot, false of the object.
-- **Thinking closures *copy* variables.** They don't copy — they keep a **live reference** to
-  the environment. Mutations are seen by all closures over that environment.
-- **Believing each `setTimeout`/loop iteration gets its own `var`.** With `var` there's one
-  shared binding (classic loop-closure bug); `let` creates a fresh binding per iteration.
-  Derivable from "how many environment cells exist?"
-- **Assuming `{} === {}`**. Two object literals are two heap allocations → two addresses →
-  not equal. The root cause of countless React re-render bugs.
-- **Saying "pass by reference."** Use the reassign-vs-mutate test to stay precise.
-
----
-
-## Interview Questions
-
-1. Draw the stack and heap for `makeAccount` after it returns. Where is `balance`? Why isn't
-   it garbage-collected?
-2. Explain a closure to a junior **without using the word "closure"**, in terms of memory
-   lifetime.
-3. Why does `for (var i...) setTimeout(() => console.log(i))` print the final value N times,
-   but `let` prints 0,1,2,…? Answer in terms of environment cells.
-4. `a = {n:1}; b = a; b = {n:2};` — what is `a.n`? Now `b.n = 3` after `b = a` instead —
-   what is `a.n`? Explain via addresses.
-5. What exactly causes `Maximum call stack size exceeded`, and why is it a *stack* error and
-   not a *heap* error?
-6. Two `useState`-like counters made by the same factory share or don't share state? Tie it
-   to Q2 above.
-
----
-
-## Homework
-
-1. **Hand-trace** (on paper, ASCII) the stack+heap for:
-   ```js
-   function counter() { let c = 0; return () => ++c; }
-   const x = counter(), y = counter();
-   x(); x(); y();
-   ```
-   Predict the three return values, then explain *why* `x` and `y` don't interfere — in terms
-   of how many environment cells exist.
-2. **Break it on purpose.** Write a `var` loop-closure bug, predict the output, run it,
-   then fix it two ways (with `let`, and with an IIFE) and explain each fix as "how many cells
-   now exist."
-3. **Reachability.** Write a small object graph (objects referencing each other) and identify
-   which objects become collectable after you null one root. Draw the heap before/after.
-4. Write the one-sentence definition of a closure **you** will use in interviews, grounded in
-   the memory model from this chapter. Put it in `NOTES.md`.
-
----
-
-## Summary
-
-- The engine can't "just run" — it keeps a **call stack** of **execution contexts** (frames),
-  each holding local bindings, a scope-chain reference, and `this`. This exists to support
-  nested/recursive calls with isolated locals and return addresses.
-- Memory splits into **stack** (ordered, short-lived frames; primitives + addresses) and
-  **heap** (long-lived objects; freed by reachability). The split exists because some data
-  outlives the call that created it.
-- **Primitives** sit in the frame by value; **objects** sit in the heap, referenced by an
-  address in the frame. Every copy/equality/pass question reduces to "value or address?".
-- The **scope chain** is fixed at definition (lexical) via each function's hidden
-  `[[Scope]]` reference, and walked at lookup time.
-- A **closure** is a function plus a live reference to its defining environment, which the GC
-  therefore keeps alive after the defining frame pops. It's a *consequence* of the model, not
-  a separate feature. This is the seed of React's hooks and stale-closure bugs.
-
-**Next → Chapter 02, Event Loop:** the stack can only do *synchronous* work. What happens to
-`setTimeout`, a `fetch`, a Promise? We'll add the event loop, the task/microtask queues, and
-derive why `Promise.then` beats `setTimeout(…,0)` — all on top of the stack model from here.
-
----
-
----
-
-# ═══ Internals Deep-Dive (source-verified) ═══
-
-> Everything above is the *mental model*. This section is the *machinery* — how V8 and the
-> ECMAScript spec actually implement it. Verified against V8 docs/blog (engine state ≈ V8 v12 /
-> Chrome M117+, the four-tier pipeline) and ECMA-262 (tc39.es/ecma262). Citations inline. The
-> model above is what you reason with; this is what's true underneath.
-
-## A. The spec's real model of "execution context" (ECMA-262 §9)
-
-What this chapter called a "frame's variable environment" the spec splits precisely. A running
-**execution context** has these fields (§9.4):
-
-- **LexicalEnvironment** — resolves identifier references; holds `let`/`const`/`class` and block
-  scope.
-- **VariableEnvironment** — holds **`var`** bindings and the formal parameters. (Yes — `var` and
-  `let` live in *different* environment fields of the same context. That's the spec-level reason
-  `var` hoists to the function scope while `let` is block-scoped.)
-- **PrivateEnvironment** (for `#private` names), plus Function, Realm, ScriptOrModule.
-
-Each of those points at an **Environment Record** (§9.1) — the spec's name for "a scope." The
-concrete subtypes:
-
-| Record type | Holds |
-|---|---|
-| **Declarative** | `let`/`const`/`class`/function decls |
-| **Object** | bindings = properties of a binding object (the global object; legacy `with`) |
-| **Function** | a Declarative subtype per call; adds `this`/`super`/`new.target` |
-| **Global** | composite: an Object record (`var` + builtins) **+** a Declarative record (top-level `let`/`const`) |
-| **Module** | a Declarative subtype; supports immutable indirect bindings for imports (Ch 02) |
-
-**The scope chain is literally a field.** Every Environment Record has **`[[OuterEnv]]`**, a
-pointer to the enclosing record (null at the global record). Identifier lookup is the abstract
-operation **GetIdentifierReference(env, name)** (§9.1.2.1): check `env` via `HasBinding`; if
-missing, recurse into `env.[[OuterEnv]]`; if `env` is null → unresolvable → `ReferenceError`.
-That recursion *is* the scope chain from the diagram above — not a metaphor, an algorithm.
-
-**Closures, spec-precise.** When a function is created, its function object's **`[[Environment]]`**
-internal slot captures the *current* LexicalEnvironment. On each call, **NewFunctionEnvironment**
-makes a Function Environment Record whose `[[OuterEnv]]` = the function's `[[Environment]]`. Because
-the returned inner function keeps `[[Environment]]`, that captured record stays reachable → not
-GC'd → the closure persists. (This is the Ch-01 simulation, in spec terms.)
-
-**`this` is a field, not a variable** (§9.1.1.3). A Function Environment Record has
-`[[ThisValue]]` and `[[ThisBindingStatus]]` ∈ {`lexical`, `initialized`, `uninitialized`}:
-- **Arrow functions** are `lexical` — they hold **no** `this`; reads walk `[[OuterEnv]]` (which is
-  why arrows "inherit" `this` and ignore `call`/`apply` `thisArg`).
-- A derived-class `this` before `super()` is `uninitialized` → reading throws `ReferenceError`.
-- Method call `obj.m()` sets `this` to the **reference base** (the object you called it *on*, at
-  the call site) — not where `m` was defined. That's the entire "lost `this`" bug class.
-
-## B. How V8 actually runs your code (the compilation pipeline)
-
-This chapter said "the engine runs it." V8 actually runs it through **four tiers**, trading
-startup speed for peak speed (v8.dev/blog/maglev, /sparkplug):
+Here is how V8 compiles your source code into something that runs on these structures:
 
 ```mermaid
 flowchart LR
-  src[source] --> sc[Scanner → tokens] --> p[Parser → AST]
+  src[source] --> sc[Scanner -> tokens] --> p[Parser -> AST]
   p --> ig["Ignition<br/>(bytecode interpreter)"]
   ig -->|hot| sp["Sparkplug<br/>(baseline JIT, v9.1)"]
   sp -->|hotter| mg["Maglev<br/>(mid-tier JIT, M117+)"]
@@ -528,84 +135,400 @@ flowchart LR
   tf -. deopt (assumption broke) .-> ig
 ```
 
-- **Scanner → Parser → AST.** The scanner makes tokens; the parser builds the AST
-  (v8.dev/blog/scanner). **Lazy parsing:** top-level code is parsed eagerly; inner functions are
-  *pre-parsed* (a lightweight pass that validates syntax + records variable allocation but builds
-  no full AST) and only fully parsed when first called (v8.dev/blog/preparser). Wrapping a startup
-  function in parens — `(function(){…})()` — is a **PIFE** hint that makes V8 compile it eagerly.
-- **Ignition** compiles the AST to **bytecode** (a *register* machine with an implicit
-  **accumulator**), ~25–50% the size of equivalent machine code, and interprets it — while
-  collecting runtime type **feedback** (v8.dev/blog/ignition-interpreter).
-- **Sparkplug** (V8 v9.1) compiles bytecode→machine code in a single linear pass with **no IR**
-  ("the whole compiler is a switch inside a for loop") → near-instant baseline JIT
-  (v8.dev/blog/sparkplug).
-- **Maglev** (Chrome M117) is a fast SSA/CFG optimizing JIT — "good enough code, fast enough,"
-  ~10× slower than Sparkplug, ~10× faster than TurboFan (v8.dev/blog/maglev).
-- **TurboFan** is the peak optimizer, using collected feedback for **speculative** optimization.
+Your source goes through scanner (tokenizer), parser (AST builder), then Ignition (bytecode interpreter). Hot functions get promoted through Sparkplug (fast baseline JIT) to Maglev (mid-tier JIT) to TurboFan (peak optimizer). If TurboFan makes a wrong assumption, it deoptimizes back to Ignition.
 
-> Version flags: Maglev is M117+ (late 2023); older diagrams show only Ignition+TurboFan
-> (+Sparkplug). TurboFan's "sea of nodes" IR is being phased out
-> (v8.dev/blog/leaving-the-sea-of-nodes) — don't state it as permanent.
+---
 
-## C. Hidden Classes ("Maps"), Inline Caches, Deopt — why shape stability matters
+## Engine Simulation
 
-This is the deep reason behind the Ch-01 "objects live in the heap, referenced by address."
+Walk the engine through code that touches all five models: primitive vs reference, scope chain, and a closure that outlives its frame.
 
-- **Hidden class = a "Map" (V8's official term;** Shapes/Structures/Types in other engines —
-  v8.dev/docs/hidden-classes, mathiasbynens.be/notes/shapes-ics). A Map is the first pointer in an
-  object. Objects with the **same shape** share one Map; the Map's `DescriptorArray` stores each
-  property's name + **offset** once, so instances store only their values.
-- **Transitions form a tree.** Adding a property moves the object to a new Map via a
-  `TransitionArray` edge labeled by property name: `{} → {x} → {x,y}`. **Property *order*
-  matters** — `{x,y}` and `{y,x}` produce *different* shapes. Constructing objects with the same
-  properties in the same order keeps shapes stable.
-- **Inline Caches (ICs).** At a site like `o.x`, V8 caches (shape, offset) in the **feedback
-  vector**; next time, if the shape matches, it loads from the offset directly — O(1) instead of a
-  dictionary lookup. IC states: **Uninitialized → Monomorphic** (1 shape, fastest) **→ Polymorphic**
-  (a few) **→ Megamorphic** (too many → gives up, generic lookup). Stable shapes keep ICs
-  monomorphic.
-- **Deoptimization.** TurboFan code is *speculative* — it assumes the types seen so far. When an
-  assumption breaks (e.g. a value expected to be a Smi isn't), the **Deoptimizer** aborts the
-  optimized code and falls back to Ignition bytecode (benediktmeurer.de). Feedback only moves
-  "down" the type lattice and never back, so **type-unstable code can thrash** (optimize→deopt
-  repeatedly) and never reach peak speed. Practical upshot: keep object shapes and value types
-  stable in hot code.
+```js
+const tax = 0.2;                    // (A) global primitive
 
-## D. Stack vs heap, Smis & tagged values (what a "value slot" really is)
+function makeAccount(name) {        // (B) function object -> heap
+  let balance = 100;                // (C) primitive, local to this call
+  const owner = { name };           // (D) object allocation -> heap
 
-The chapter's "primitive in the slot vs address to the heap" is, precisely (v8.dev/blog/pointer-compression):
+  function deposit(amount) {        // (E) closes over balance + owner
+    balance = balance + amount;
+    return balance;
+  }
 
-- Every value slot is a **tagged value**: the **low bit is a tag**. Tag `0` → a **Smi** (Small
-  Integer): a **31-bit signed int stored inline**, left-shifted by one — no heap allocation. Tag
-  `1` → a **pointer** to a heap object (further bits mark strong/weak).
-- So `let x = 10` really does sit *in the slot* (as a Smi); `let o = {}` sits in the slot as a
-  tagged pointer into the heap — exactly the primitive-vs-reference model, at the bit level.
-- **Pointer compression** (default since V8 v8.0): on 64-bit, the heap lives in a 4-GB "cage" and
-  pointers are stored as **32-bit offsets** from a base, cutting heap size ~40%.
+  return deposit;                   // (F) return inner function
+}
 
-## E. Garbage collection — Orinoco (how the heap is actually reclaimed)
+const d = makeAccount("Ada");       // (G)
+d(50);                              // (H) -> 150
+d(25);                              // (I) -> 175
+```
 
-The chapter said "the GC frees objects once unreachable." V8's GC is **Orinoco**, generational
-(v8.dev/blog/trash-talk, /orinoco-parallel-scavenger, /concurrent-marking):
+### Step G: makeAccount("Ada") is called
 
-- **Generational hypothesis: most objects die young.** Heap = **young generation** (small, ≤16
-  MiB) + **old generation**.
-- **Minor GC = Scavenger** on the young gen: **semi-space copying**. Young gen is split From/To;
-  live objects are copied From→To; survivors of a prior GC are **promoted** to old gen. Default is
-  a **parallel** scavenger (since v6.2) using work-stealing (~20–50% less main-thread GC time).
-- **Major GC = Mark-Compact** on the whole heap: **mark** reachable → **sweep** (dead gaps go to
-  free-lists) → **compact** (defragment).
-- **Tri-color marking:** objects are **white** (undiscovered) / **grey** (found, on the worklist,
-  fields not scanned) / **black** (fully scanned). Marking ends when no grey remain; leftover white
-  is garbage. Invariant: *no black points to white*.
-- **Incremental + concurrent + parallel marking** spread the work and run helper threads while JS
-  runs, using **write barriers** (a Dijkstra-style barrier on each field write maintains the
-  invariant and a remembered set of old→new pointers). This minimizes — but can't fully eliminate
-  — **stop-the-world** pauses. *This is why allocating tons of short-lived objects in a hot path
-  (or on every render) hurts: it feeds the Scavenger and can trigger pauses* (connects to Ch 08).
+A new execution context for `makeAccount` is pushed onto the stack. Its Variable Environment holds `name`, `balance`, `owner`, `deposit`. The object `{ name: "Ada" }` is allocated in the heap. `owner` holds its address.
 
-## Go deeper
-Primary sources: V8 blog (v8.dev/blog — ignition, sparkplug, maglev, trash-talk, concurrent-marking,
-pointer-compression), V8 docs (v8.dev/docs/hidden-classes), Mathias Bynens "JavaScript engine
-fundamentals: Shapes and Inline Caches," and ECMA-262 §9 (Execution Contexts & Environment
-Records). The deep-dive above is faithful to these as of the cited versions.
+```
+STACK                                  HEAP
+┌────────────────────────────┐         ┌───────────────────────┐
+│ makeAccount("Ada")         │         │ #h1 { name: "Ada" }   |
+│   name    = "Ada"          │         │                       |
+│   balance = 100            │         │ #h2 <fn deposit>      |
+│   owner   = -------------------------> (addr #h1)            |
+│   deposit = -------------------------> (addr #h2)            |
+├────────────────────────────┤         └───────────────────────┘
+│ global                     │
+│   tax = 0.2                │   deposit's [[Scope]] points
+│   makeAccount = <fn>       │   back to makeAccount's env
+│   d = <uninitialized>      │
+└────────────────────────────┘
+```
+
+When the engine creates the `deposit` function object (#h2), it stamps onto it a hidden reference called `[[Scope]]` or `[[Environment]]`. This points to the environment where `deposit` was defined (makeAccount's environment). This stamping happens at definition time. That is lexical scope. The chain is fixed by where the function is written, not where it is later called.
+
+### Step F/G: makeAccount returns. Its frame pops.
+
+`makeAccount` returns the address of `deposit` (#h2). `d` (in global) now holds #h2. The `makeAccount` frame is popped off the stack.
+
+Here is the crucial moment. Normally when a frame pops, its locals (`balance`, `owner`) are gone. But `deposit` (#h2) still holds a reference to makeAccount's environment. The garbage collector cannot reclaim that environment. Something live still points at it. The environment is detached from the stack but kept alive on the heap.
+
+```
+STACK                          HEAP
+┌──────────────────────┐       ┌──────────────────────────────────────┐
+│ global               │       │ #h1 { name: "Ada" }                  |
+│   tax = 0.2          │       │ #h2 <fn deposit>                     |
+│   makeAccount = <fn> │       │ #h3 [closed-over env]  <----------+  |
+│   d = -----------------------> (addr #h2)                        |  |
+└──────────────────────┘       │       balance = 100              |  |
+                               │       owner   = #h1              |  |
+    d's frame is gone, but     │   #h2.[[Scope]] -----------------+  |
+    #h3 survives because #h2   └──────────────────────────────────────┘
+    still references it        = CLOSURE
+```
+
+That surviving box (#h3) is the closure. A closure is not a special language feature bolted on top. It is the natural result of two facts: (1) functions carry a reference to their defining environment, and (2) the GC keeps alive anything still referenced. The environment simply moves from stack-managed to heap-managed lifetime.
+
+### Step H: d(50)
+
+A new frame for `deposit` is pushed. It needs `balance`. `balance` is not in deposit's own environment. The engine walks the scope chain: deposit's env -> (via `[[Scope]]`) -> the closed-over env (#h3), where it finds `balance = 100`. Updates it to `150`. Returns. Frame pops. But #h3 persists, so the new `balance` of 150 is remembered.
+
+```
+deposit(50) frame                lookup walk for `balance`:
+┌──────────────────┐             deposit.env  ->  miss
+│ amount = 50      │             #h3 (closure) ->  HIT (balance = 100 -> 150)
+│ [[Scope]] -------------------------------+
+└──────────────────┘
+```
+
+### Step I: d(25)
+
+Same walk. `balance` is now `150` (the closure persisted it). It becomes `175`. Two calls to the same returned function accumulate state because they share one closed-over `balance` cell. They do not get a fresh one each time.
+
+**Primitive vs reference follows from this model directly:**
+
+```js
+let x = 10;
+let y = x;
+y = 20;
+// x is still 10 - separate slots, separate values
+
+let a = { n: 1 };
+let b = a;
+b.n = 2;
+// a.n is now 2 - both slots hold the same address -> same heap object
+```
+
+```
+PRIMITIVE                         REFERENCE
+STACK                             STACK            HEAP
+┌───────────┐                     ┌───────────┐    ┌──────────┐
+│ x = 10    │                     │ a = #h9 --------> {n: 2} │
+│ y = 20    │ (independent)       │ b = #h9 --------> (same) │
+└───────────┘                     └───────────┘    └──────────┘
+```
+
+"Pass by value vs reference" dissolves: JavaScript is always pass-by-value. For objects, the value being passed is an address. Reassigning the parameter does not affect the caller. Mutating the pointed-to object does.
+
+---
+
+## Internal Implementation
+
+The mental model above is what you reason with. Here is what is actually true underneath in the ECMAScript spec and V8.
+
+### Execution context spec (ECMA-262 section 9)
+
+Every running execution context has these fields:
+
+- **LexicalEnvironment**: resolves identifier references. Holds `let`, `const`, `class`, and block scope.
+- **VariableEnvironment**: holds `var` bindings and formal parameters. `var` and `let` live in different environment fields of the same context. That is the spec-level reason `var` hoists to function scope while `let` is block-scoped.
+- **PrivateEnvironment**: for `#private` names.
+- Plus Function, Realm, ScriptOrModule.
+
+Each LexicalEnvironment and VariableEnvironment points at an **Environment Record** (section 9.1). That is the spec's name for a scope. Concrete subtypes:
+
+| Record type | Holds |
+|---|---|
+| Declarative | `let`, `const`, `class`, function declarations |
+| Object | bindings as properties of a binding object (global object, legacy `with`) |
+| Function | Declarative subtype per call; adds `this`, `super`, `new.target` |
+| Global | Composite: Object record (`var` + builtins) + Declarative record (top-level `let`/`const`) |
+| Module | Declarative subtype; supports immutable indirect bindings for imports |
+
+**Scope chain pseudo-code.** Every Environment Record has `[[OuterEnv]]`, a pointer to the enclosing record (null at the global record). Identifier lookup works like this:
+
+```
+function getIdentifierReference(env, name):
+  if env is null:
+    throw ReferenceError(name + " is not defined")
+  if env.hasBinding(name):
+    return env.getBindingValue(name)
+  return getIdentifierReference(env.[[OuterEnv]], name)
+```
+
+That recursion is the scope chain. It is not a metaphor. It is an algorithm.
+
+**Closure creation pseudo-code.** When a function is created:
+
+```
+function createFunction(body, lexicalEnv):
+  fn = new FunctionObject(body)
+  fn.[[Environment]] = lexicalEnv   // capture current scope
+  return fn
+```
+
+On each call:
+
+```
+function callFunction(fn, thisArg, args):
+  env = newFunctionEnvironment(fn.[[Environment]])
+  ctx = new ExecutionContext(env, thisArg)
+  pushStack(ctx)
+  result = evaluate(fn.body)
+  popStack()
+  return result
+```
+
+Because the returned inner function keeps `[[Environment]]`, that captured record stays reachable. It is not garbage-collected. The closure persists.
+
+**`this` is a field, not a variable.** A Function Environment Record has `[[ThisValue]]` and `[[ThisBindingStatus]]` which is one of `lexical`, `initialized`, or `uninitialized`. Arrow functions are `lexical`. They hold no `this`. Reads walk `[[OuterEnv]]`, which is why arrows inherit `this` and ignore `call`/`apply` `thisArg`.
+
+### V8 compilation pipeline
+
+V8 runs code through four tiers:
+
+1. **Scanner** produces tokens from source text.
+2. **Parser** builds the AST. Lazy parsing: top-level code is parsed eagerly. Inner functions are pre-parsed (lightweight pass that validates syntax and records variable allocation). They are only fully parsed when first called.
+3. **Ignition** compiles AST to bytecode (a register machine with an implicit accumulator). Bytecode is about 25-50% the size of equivalent machine code. Ignition interprets it while collecting runtime type feedback.
+4. **Sparkplug** (V8 v9.1) compiles bytecode to machine code in a single linear pass with no intermediate representation. It produces near-instant baseline JIT code.
+5. **Maglev** (Chrome M117+) is a fast SSA/CFG optimizing JIT. About 10x slower than Sparkplug and 10x faster than TurboFan.
+6. **TurboFan** is the peak optimizing compiler. Uses collected feedback for speculative optimization.
+
+### Hidden Classes (Maps), Inline Caches, Deoptimization
+
+An object's first pointer in memory is its **Map** (V8's term for hidden class/shape). Objects with the same shape share one Map. The Map stores each property's name and offset once. Instances store only their values.
+
+Property transitions form a tree. Adding property `x` then `y` moves through `{} -> {x} -> {x,y}` via a TransitionArray. Property order matters: `{x, y}` and `{y, x}` produce different shapes.
+
+At a property access site like `o.name`, V8 caches (shape, offset) in the feedback vector. Next time, if the shape matches, it loads from the offset directly. This is O(1) instead of dictionary lookup. Cache states: Uninitialized -> Monomorphic (1 shape, fastest) -> Polymorphic (a few shapes) -> Megamorphic (too many, generic lookup). Stable shapes keep caches monomorphic.
+
+TurboFan code is speculative. It assumes the types seen so far. When an assumption breaks (a value expected to be a small integer is not), the Deoptimizer aborts optimized code and falls back to Ignition bytecode. Type-unstable code can thrash (optimize, deopt, optimize, deopt repeatedly) and never reach peak speed.
+
+### Smis and tagged values
+
+Every value slot is a tagged value. The low bit is a tag:
+
+- Tag `0`: **Smi** (Small Integer). A 31-bit signed int stored inline, left-shifted by one. No heap allocation.
+- Tag `1`: **Pointer** to a heap object. Further bits mark strong/weak.
+
+So `let x = 10` really does sit in the slot as a Smi. `let o = {}` sits in the slot as a tagged pointer into the heap. This is the primitive-vs-reference model at the bit level.
+
+Pointer compression (default since V8 v8.0): on 64-bit, the heap lives in a 4-GB cage. Pointers are stored as 32-bit offsets from a base. This cuts heap size by about 40%.
+
+### Garbage collection: Orinoco
+
+V8's GC is **Orinoco**, generational. Key insight: most objects die young.
+
+- Heap is split into **young generation** (small, up to 16 MiB) and **old generation**.
+- **Minor GC (Scavenger)** on young gen: semi-space copying. Young gen is split From/To. Live objects are copied From -> To. Survivors of a prior GC are promoted to old gen.
+- **Major GC (Mark-Compact)** on whole heap: mark reachable -> sweep dead gaps -> compact (defragment).
+- **Tri-color marking**: objects are white (undiscovered), grey (found, on worklist, fields not scanned), black (fully scanned). Marking ends when no grey remain. Leftover white is garbage. Invariant: no black points to white.
+- **Incremental + concurrent + parallel marking** spreads work across helper threads. Write barriers maintain the invariant and track old-to-new pointers.
+
+This is why allocating many short-lived objects in a hot path hurts: it feeds the Scavenger and can trigger pauses.
+
+---
+
+## Real World Example
+
+**CRM: per-session user state.** A sales dashboard loads 1000 leads. Each lead has an "assign to me" button. When clicked, it calls an API, then updates that lead's status. You implement this with a factory:
+
+```js
+function makeLeadController(leadId, initialStatus) {
+  let status = initialStatus;
+  let retryCount = 0;
+
+  return {
+    assign(userId) {
+      retryCount = 0;
+      return api.assignLead(leadId, userId).then(() => {
+        status = "assigned";
+      });
+    },
+    retry() {
+      retryCount++;
+      return this.assign(currentUser);
+    },
+    getStatus() { return status; }
+  };
+}
+
+// One controller per lead row
+const controllers = leads.map(l => makeLeadController(l.id, l.status));
+```
+
+Each `makeLeadController` call creates a separate closure environment. `status` and `retryCount` are private to that lead. No two leads share state. If you render 1000 leads, you get 1000 independent closure environments in the heap. Clicking "assign" on lead 42 only affects lead 42's `status` cell.
+
+This pattern appears everywhere: React hooks (`useState` is essentially a factory that returns `[value, setter]` where the setter closes over a state cell), event handlers in lists, per-request controllers in Express middleware, widget state in dashboards.
+
+**React specifically:** A `useState` hook closes over the component's state cell the same way `deposit` closed over `balance`. A stale closure bug in a React event handler is exactly `deposit` holding an old environment cell. Reference identity (`{} !== {}`) is the root cause of most unnecessary re-renders. `useMemo` and `useCallback` exist to keep an address stable across renders.
+
+**Search bar with debounce.** Every keystroke creates a new closure for the timeout callback. If the user types fast, old closures must not fire and overwrite the correct state. Understanding closure lifetime (each `setTimeout` callback captures the `query` variable at the time the timeout was scheduled) is how you debug ghost input values.
+
+---
+
+## Tradeoffs
+
+**Advantages of the stack-heap model:**
+
+- Recursion and re-entrancy work correctly. Each call frame is isolated.
+- Stack allocation is cheap. Pushing and popping a frame is a pointer increment and decrement. No GC overhead for locals.
+- Heap objects live exactly as long as needed. No manual memory management.
+- Closures enable data hiding without classes. A function can own private state without exposing it on `this`.
+- GC reduces memory leak surface compared to manual management (C, C++).
+
+**Disadvantages:**
+
+- Stack size is fixed (typically ~1 MB per thread on desktop). Deep recursion crashes. You cannot grow the stack mid-execution.
+- Heap allocation is slower than stack allocation. Objects need allocation, initialization, and eventual GC.
+- GC pauses can jank the UI. Allocating many objects in a hot render cycle increases GC pressure.
+- Closures keep entire environment chains alive. A closure that only needs `balance` keeps `owner` alive too. Accidental retention (holding a closure reference longer than needed) causes memory leaks.
+- Polymorphic property access (different-shaped objects at the same call site) deoptimizes to slow dictionary lookup in V8.
+- Developer experience: debugging closures is harder than debugging class instances. DevTools show "Closure" in scope but the connection between the closed-over variable and the function that captured it is implicit.
+
+**CPU cost of closures vs classes:**
+
+```
+Closure approach:
+  makeAccount("Ada") -> allocates 1 env + 1 function object + 1 name object
+  Each d(n) call     -> scope chain walk (2 hops) to find balance
+
+Class approach:
+  class Account { constructor(name) { this.balance = 100; this.name = name; } }
+  deposit(n) { this.balance += n; return this.balance; }
+  Each d(n) call     -> `this` lookup + property access (inline cache hit)
+```
+
+Classes use property access (IC-friendly, O(1) after monomorphic). Closures use scope chain walk (O(depth) per access). Classes win for hot-path code with many instances. Closures win for encapsulation without prototypal overhead or when you need truly private state.
+
+---
+
+## Common Mistakes
+
+**Mixing up the variable with the object.** The variable is a slot on the stack. The object is heap data. "Freed when the function returns" is true of the slot, false of the object.
+
+**Thinking closures copy variables.** They do not copy. They keep a live reference to the environment. Mutations are seen by all closures that share that environment.
+
+**Believing each setTimeout or loop iteration gets its own `var`.** With `var` there is one shared binding (the classic loop-closure bug). `let` creates a fresh binding per iteration. Ask: "how many environment cells exist?"
+
+**Assuming `{} === {}`.** Two object literals are two heap allocations. They get two different addresses. They are not equal. This is the root cause of most React re-render bugs.
+
+**Saying "pass by reference."** Use the reassign-vs-mutate test: if reassigning the parameter inside the function also reassigns the caller's variable, that is pass-by-reference. JavaScript does not do that. It is always pass-by-value. For objects, the value is an address.
+
+**Storing closures in state without cleanup.** If a React effect creates a closure that references DOM nodes or subscriptions, failing to clean up on unmount keeps those nodes reachable through the closure's environment chain. The GC cannot collect them until the closure itself is collected.
+
+---
+
+## SDE-2 Interview Answer
+
+**Question: "Explain how JavaScript's runtime handles memory, scope, and closures. Use the stack, heap, and execution context model."**
+
+### Mid-level variant
+
+"The JavaScript engine uses a call stack to track function execution. Every function call pushes an execution context onto the stack. That context holds local variables, the value of `this`, and a reference to the surrounding scope. When the function returns, its context is popped. Objects live in the heap, which is garbage-collected.
+
+Primitives like numbers are stored directly in the stack frame. Objects are stored in the heap, and the frame holds a reference to them. When you copy a variable holding an object, you copy the reference, not the object itself.
+
+A closure happens when an inner function uses variables from an outer function, and the inner function outlives the outer function. The engine keeps the outer function's environment alive in the heap so the inner function can still access those variables. This is why `useState` works in React the setter closes over a state cell that persists across renders."
+
+### Senior variant
+
+"The runtime splits memory into stack and heap because of a fundamental constraint: some data must outlive the call that created it. Locals and return addresses go on the stack (cheap, LIFO, deterministic lifetime). Objects that may be referenced after the call returns go on the heap (dynamic, GC-managed lifetime).
+
+Every execution context has two environment records: a LexicalEnvironment for `let`/`const` and a VariableEnvironment for `var`. This is why `var` hoists to function scope while `let` is block-scoped. The scope chain is a linked list of `[[OuterEnv]]` pointers. When you reference a variable, the engine walks this list. That is linear time in the nesting depth.
+
+Closures are a memory-lifetime phenomenon, not a syntax feature. When a function is created, its `[[Environment]]` slot captures the current LexicalEnvironment. If that function outlives its creator, the captured environment stays in the heap. The GC keeps it alive because it is still referenced. Every closure you create is a heap allocation that persists until nothing holds the function.
+
+Practical implications: every function in JavaScript is a closure (it captures its `[[Environment]]` at definition time). But the memory cost only matters when the environment survives its creator. In React, every render creates new function objects and new closures. If those functions capture large objects from the component scope, those objects stay alive as long as the closure survives. This is why `useCallback` and `useMemo` exist: they stabilize the function reference and the value reference across renders, preventing unnecessary heap allocations and keeping the GC load low."
+
+### Engineering Lead variant
+
+"The stack-heap model constrains architecture decisions across the entire frontend. Three things I watch for:
+
+**1. Closure lifecycles in component trees.** Every component render allocates closure environments for event handlers, effects, and callbacks. If those closures capture the entire component scope (props, state, derived values), a single leaked closure can keep an entire subtree alive. I enforce patterns that minimize captured scope: pass primitives to callbacks instead of objects, use refs for values that change frequently, and clean up subscriptions in `useEffect` returns. This is not micro-optimization. A leaked closure in a list component that re-renders 500 times doubles the memory retained per render cycle.
+
+**2. Stack depth as a scalability boundary.** The fixed stack size (~1 MB) means deep recursion is off the table for production code. I mandate that any operation that can exceed 1000 nested calls uses an iterative approach or a trampoline. The CRM dashboard crash in the problem section is exactly this: recursive tree walking without a depth check. This becomes a team standard: recursion is for prototypes only.
+
+**3. GC pause budgets.** V8's Orinoco GC is generational and concurrent, but it still pauses. Allocating many short-lived objects on every interaction (creating new objects in render, dispatching Redux actions that clone entire state trees) feeds the young-generation scavenger. On low-end mobile devices, GC time above 16 ms per frame causes visible jank. I set team budgets: no more than one new object allocation per event handler unless cached. Use object pooling for hot paths. Prefer immutable updates that share structure (Immer, immutable.js) over full copies.
+
+The runtime model determines what performance patterns are even possible. Understanding stack vs heap, closure retention, and GC behavior is not trivia. It is how you prevent production incidents at scale."
+
+---
+
+## Follow-up Questions
+
+**Q1: Where does the object `{ name: "Ada" }` live, and when is it freed?**
+
+The binding `owner` lives in makeAccount's stack frame. The object itself lives in the heap. It is freed not when makeAccount returns but when the GC proves nothing references it. The closure returned by makeAccount keeps the environment, and therefore the object, reachable. So it persists across multiple calls to `d()`.
+
+**Q2: Why does calling `d(50)` then `d(25)` give 175 and not 125?**
+
+Each `makeAccount` call creates one environment with one `balance` cell. The returned `deposit` function closes over that cell. Repeated calls to that same `deposit` mutate the same `balance` cell, so they accumulate. A second `makeAccount` call would produce a separate cell with its own `balance`. `d(50)` sets balance to 150. `d(25)` reads that 150, adds 25, stores 175.
+
+**Q3: Is JavaScript pass-by-value or pass-by-reference?**
+
+Always by value. For objects, the value is an address. Use the reassign-vs-mutate test: reassigning the parameter inside a function never affects the caller's variable. Mutating the object does affect the caller because both names hold the same address. True pass-by-reference would let you reassign the caller's variable from inside the function. JavaScript does not have that.
+
+**Q4: What exactly causes `Maximum call stack size exceeded`, and why is it a stack error and not a heap error?**
+
+The call stack has a fixed maximum size (roughly 1 MB per thread in V8). Each function call pushes a frame containing locals, parameters, and return address. Excessive recursion pushes frame after frame with no pops. When the stack pointer would exceed the reserved memory region, the engine aborts. It is a stack error because the stack region is finite and contiguous. You cannot grow it dynamically. The heap can grow (up to system memory limits), so a heap error would be a different failure mode (out of memory).
+
+**Q5: Two `useState`-like counters made by the same factory share or do not share state? Tie to the closure model.**
+
+They do not share state. Each factory call creates a separate environment with its own `count` cell. The returned function closes over its own environment. Two calls to the factory produce two independent cells. This is exactly the `makeAccount` model: each call creates its own environment. `x = counter(); y = counter(); x(); y();` produce different counts because `x`'s closure references a different environment cell than `y`'s.
+
+---
+
+## Mental Trigger
+
+**Closure = Function + Live Reference to Outer Environment = Heap-kept Stack Frame**
+
+---
+
+## One Page Revision
+
+- **Problem:** Nested calls need pause/resume (stack). Objects outlive creators (heap).
+- **Why stack:** Flat variable model fails at recursion and re-entrancy. Each call needs isolated locals and return address.
+- **Why heap:** Objects must survive the call that created them. Cannot live in ephemeral stack frame.
+- **Stack:** LIFO, fixed size (~1 MB), cheap push/pop. Holds primitives (by value) and addresses (by reference).
+- **Heap:** Dynamic, GC-managed. Holds objects, function bodies, closure environments.
+- **Primitive vs Reference:** Primitives are values in stack slot. Objects are addresses in stack slot pointing to heap.
+- **Execution context:** Frame with LexicalEnvironment, VariableEnvironment, `this`, scope chain link.
+- **Scope chain:** `[[OuterEnv]]` linked list. Walked at lookup time. Fixed at definition time (lexical).
+- **Closure:** Function + `[[Environment]]` reference. Environment survives creator's frame pop. GC keeps it alive because function references it.
+- **`this`:** Field in Function Environment Record. Arrow functions = `lexical` (inherit from outer). Method calls = reference base. Derived class before `super()` = `uninitialized`.
+- **V8 pipeline:** Scanner -> Parser -> Ignition (bytecode) -> Sparkplug (baseline JIT) -> Maglev (mid JIT) -> TurboFan (peak JIT). Deoptimization falls back to Ignition.
+- **Hidden Classes (Maps):** Objects with same shape share Map with property offsets. Transitions form a tree. Property order matters for shape.
+- **Inline Caches:** Cache (shape, offset) at access site. States: Uninitialized -> Monomorphic -> Polymorphic -> Megamorphic.
+- **Tagged values:** Low bit 0 = Smi (31-bit int inline). Low bit 1 = heap pointer.
+- **GC (Orinoco):** Generational (young/old). Minor GC copies survivors. Major GC mark-sweep-compact. Tri-color marking. Incremental + concurrent.
+- **Pass-by-value:** Always. For objects, value is address. Test: reassign param does not affect caller. Mutate does.
+- **Common mistakes:** Variable vs object lifetime. Closures do not copy. `var` shares one binding per loop. `{} !== {}`. Saying "pass by reference." Not cleaning up closures in effects.

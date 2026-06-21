@@ -6,8 +6,8 @@ description: "Button, Modal, Table, Select, Data Grid API contracts"
 ---
 
 
-> Builds on Ch 24 (patterns), Ch 23 (a11y), Ch 18 (forms). The "design a Button/Modal/Table"
-> question — tests whether you think about API surface, composition, edge states, and
+> Prerequisites: React component patterns (controlled/uncontrolled, render props, compound components, higher-order components), accessibility fundamentals (ARIA roles/attributes, keyboard navigation, focus management, screen reader behavior), and form handling (controlled inputs, validation strategies, form library integration patterns).
+> The "design a Button/Modal/Table" question tests whether you think about API surface, composition, edge states, and
 > accessibility before writing a single line of code.
 
 ---
@@ -22,7 +22,7 @@ description: "Button, Modal, Table, Select, Data Grid API contracts"
 
 From "contract" you derive: props are the public API, state is internal, refs are escape
 hatches. Design the minimum viable API first, then add convenience props. Every boolean
-prop is a potential expansion point — prefer variant/enum over boolean for visual options.
+prop is a potential expansion point. Prefer variant or enum over boolean for visual options.
 
 ```mermaid
 flowchart TB
@@ -71,7 +71,7 @@ flowchart TB
   `defaultValue`. If a parent needs to drive it, expose `value` + `onChange`. Support both
   via the same internal hook (see pattern below).
 - **Polymorphism**: Button should render as `<button>`, `<a>`, or `<div>` based on `as` prop
-  or `href` presence — without losing accessibility.
+  or `href` presence. Do this without losing accessibility.
 - **Slot pattern**: Accept `renderX` or slot props for customization (e.g., `renderRow`,
   `renderCell` in Table) instead of hardcoding content structure.
 - **Minimum API**: Don't add props until you have 3 use cases that need them. Premature
@@ -157,7 +157,7 @@ so parent components can focus or position tooltips."
 
 - **Loading + disabled**: Clicking a loading button should do nothing.
 - **Icon-only**: Support `aria-label` for accessibility when children is just an icon.
-- **Form submit**: `type="submit"` must trigger form `onSubmit` — don't prevent this.
+- **Form submit**: `type="submit"` must trigger form `onSubmit`. Do not prevent this.
 - **Router link**: Use `as={Link}` pattern so Button can render as a Next.js/React Router link.
 
 ---
@@ -297,7 +297,7 @@ type SelectProps = {
 | Keyboard nav | Arrow keys, Enter to select, Escape to close |
 | Multi-select | `multiple` prop changes value type to `string[]`, shows tags |
 | Custom render | `renderOption` for icons, avatars, rich formatting |
-| Portal menu | Menu should overflow container boundaries — render in portal |
+| Portal menu | Menu should overflow container boundaries. Render in portal |
 
 ### Controlled/uncontrolled pattern
 
@@ -316,7 +316,7 @@ function useControllableState({ value, defaultValue, onChange }) {
 ```
 
 This single hook enables every component below to support controlled + uncontrolled with no
-extra logic. Pattern is usable in ButtonGroup, Tabs, Accordion, Modal, Table selection — any
+extra logic. This pattern works in ButtonGroup, Tabs, Accordion, Modal, Table selection, and any
 component with internal state.
 
 ---
@@ -362,10 +362,10 @@ type TableProps<T> = {
 | Decision | Why |
 |---|---|
 | Column config as array | Declarative, testable, trivially sortable/filterable |
-| `render` function | Caller controls cell rendering — Table just manages layout |
+| `render` function | Caller controls cell rendering. Table just manages layout |
 | Sort controlled externally | So parent owns the sort state (ties to URL params) |
-| Virtualization toggle | Table doesn't force one approach — but opts in |
-| Loading/empty/error states | Every data component needs these (Ch 33) |
+| Virtualization toggle | Table does not force one approach. It lets you opt in |
+| Loading/empty/error states | Every data component needs these. Each state needs its own UI look: skeleton or spinner for loading, message and action for empty, error message and retry for errors |
 
 ### Simplified skeleton
 
@@ -439,7 +439,7 @@ type DataGridProps<T> = TableProps<T> & {
 
 ## 6. Toast System Design
 
-Not just Toast component — a full system.
+Not just a Toast component. This is a full system.
 
 ### Architecture
 
@@ -500,32 +500,32 @@ function useToast(): {
 
 Before writing any component code, ask:
 
-1. **Who owns the state?** — Controlled, uncontrolled, or both?
-2. **Is this a basic or composite component?** — Button is basic; Table is composite.
-3. **What are the visual variants?** — Use enums, not booleans.
-4. **What are the interaction states?** — Hover, focus, active, disabled, loading, error.
-5. **What are the content states?** — Empty, data, error, loading.
-6. **Is keyboard navigation needed?** — Arrows? Enter? Escape? Tab?
-7. **Is it accessible?** — Role, aria-* attributes, focus management, screen reader.
-8. **Does it need a ref?** — `forwardRef` for focus, measure, form integration.
-9. **Does it need a portal?** — Modal, Dropdown, Tooltip, Toast.
-10. **Does it need animation?** — Enter/exit transitions (Framer Motion, CSS transitions).
-11. **Can I make it composable?** — `renderX` slots, `as` prop, children-based extension.
+1. **Who owns the state?** Is it controlled, uncontrolled, or both?
+2. **Is this a basic or composite component?** Button is basic. Table is composite.
+3. **What are the visual variants?** Use enums, not booleans.
+4. **What are the interaction states?** Hover, focus, active, disabled, loading, error.
+5. **What are the content states?** Empty, data, error, loading.
+6. **Is keyboard navigation needed?** Arrows? Enter? Escape? Tab?
+7. **Is it accessible?** Check role, aria-* attributes, focus management, screen reader.
+8. **Does it need a ref?** Use `forwardRef` for focus, measure, form integration.
+9. **Does it need a portal?** Needed for Modal, Dropdown, Tooltip, Toast.
+10. **Does it need animation?** Enter and exit transitions (Framer Motion, CSS transitions).
+11. **Can I make it composable?** Use `renderX` slots, `as` prop, children-based extension.
 
 ---
 
 ## Summary
 
-> **Design the API before writing the implementation. The API is the contract with every**
+> **Design the API before writing the code. The API is the contract with every**
 > **consumer of your component. A strong API makes correct usage easy and incorrect usage**
-> **hard. Forward refs, support controlled + uncontrolled, use enums over booleans, and**
+> **hard. Forward refs, support controlled and uncontrolled, use enums over booleans, and**
 > **always cover the four states for data-display components.**
 
 ---
 
 ## Homework
 
-1. Design a DatePicker component — write the full TypeScript API contract (no implementation)
+1. Design a DatePicker component. Write the full TypeScript API contract (no code needed)
 2. Design a notification badge / avatar group component
 3. Design a file uploader with drag-and-drop, preview, progress, retry
 4. Design a carousel/slider component API

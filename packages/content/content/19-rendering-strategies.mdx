@@ -6,23 +6,22 @@ description: "CSR, SSR, SSG, ISR, RSC, hydration"
 ---
 
 
-> Builds on Ch 03 (render produces HTML-ish output), Ch 07 (browser paints HTML), Ch 13
-> (network). a product company is a Vite SPA (CSR), but an SDE-2 must reason about the whole spectrum.
+> **Prerequisites:** understanding of React render output. Components produce virtual DOM that becomes HTML. You also need to know the browser paint pipeline: how HTML is parsed and painted to screen. Network fundamentals help too. These include request/response and CDN delivery.
 
 ---
 
 ## The one mental model
 
-> **The only question is: WHERE and WHEN does the HTML get built? Four places/times — in the
-> browser at runtime (CSR), on the server per request (SSR), at build time (SSG), or a hybrid
-> that rebuilds stale pages (ISR) — plus RSC, which splits a component tree into server-rendered
-> and client-interactive parts. Each choice trades off time-to-content, server cost, freshness,
-> and interactivity. Pick by "how fresh must this be, how fast must first paint be, and how
-> interactive is it."**
+> **The only question is: WHERE and WHEN does the HTML get built? There are four places and times. In the
+> browser at runtime (CSR). On the server per request (SSR). At build time (SSG). Or a hybrid
+> that rebuilds stale pages (ISR). Plus RSC, which splits a component tree into server-rendered
+> and client-interactive parts. Each choice trades off time to content, server cost, freshness,
+> and interactivity. Pick by asking: how fresh must this be, how fast must first paint be, and how
+> interactive is it.**
 
-From "where/when is the HTML built" you derive why CSR has a blank-screen-then-hydrate cost, why
-SSR improves first paint but costs server time, what hydration is (and its cost), and what RSC
-actually solves. No memorizing acronyms — you place each on the where/when grid.
+From "where/when is the HTML built" you understand why CSR has a blank-screen-then-hydrate cost. You understand why
+SSR improves first paint but costs server time. You understand what hydration is and its cost. You understand what RSC
+actually solves. No memorizing acronyms. You place each on the where/when grid.
 
 ---
 
@@ -50,13 +49,13 @@ actually solves. No memorizing acronyms — you place each on the where/when gri
 
 ## Introduction
 
-This is "rendering strategy" interview territory and the backbone of Next.js questions. Even on a
-Vite SPA you should articulate why you chose CSR and when you'd reach for SSR/SSG. It's all one
+This is "rendering strategy" interview territory. It is also the backbone of Next.js questions. Even on a
+Vite SPA you should explain why you chose CSR and when you would use SSR or SSG. It all comes down to one
 axis.
 
 ---
 
-## Mental Model — the spectrum
+## Mental Model: the spectrum
 
 ```mermaid
 flowchart LR
@@ -79,7 +78,7 @@ RSC                   fast         flexible        medium       good   only clie
 
 ---
 
-## Engine Simulation — CSR vs SSR timeline
+## Engine Simulation: CSR vs SSR timeline
 
 ```
 CSR:
@@ -94,52 +93,47 @@ SSR:
   user sees: content FAST, clickable a bit later
 ```
 
-**Hydration** = React re-runs your components on the client over the server-rendered HTML to
-attach event handlers and rebuild its internal tree (Fibers, Ch 04). The cost: you ship and
-execute the JS anyway, and there's a window where content is visible but not interactive (poor
-INP if heavy, Ch 08). RSC and "islands"/partial hydration exist to cut that JS.
+**Hydration** means React re-runs your components on the client over the server-rendered HTML. This attaches
+event handlers and rebuilds React's internal tree (Fibers, Ch 04). The cost: you ship and
+execute the JS anyway. There is a window where content is visible but not interactive. This causes poor
+INP if it is heavy (Ch 08). RSC and "islands" or partial hydration exist to reduce that JS.
 
 ---
 
-## RSC — what it actually changes
+## RSC: what it actually changes
 
-React Server Components render **on the server** and ship their output (a serialized tree), not
-their JS, to the client. Only **client components** (`"use client"`) ship JS and hydrate. Wins:
-less JS shipped (server components add zero bundle), direct server data access (DB/fs in the
-component), secrets stay server-side. The mental shift: a component tree is now split — static/
-data parts run on the server, interactive leaves run on the client. (Next.js App Router default;
-not relevant to a Vite SPA, but a strong "where's the boundary" interview topic.)
+React Server Components render **on the server** and ship their output (a serialized tree) to the client. They do not ship their JS. Only **client components** (`"use client"`) ship JS and hydrate. The wins: less JS shipped (server components add zero to the bundle), direct server data access (you can use the database or filesystem in the component), and secrets stay on the server. The mental shift: a component tree is now split. Static and data parts run on the server. Interactive parts run on the client. This is the Next.js App Router default. It is not relevant to a Vite SPA, but it is a strong "where is the boundary" interview topic.
 
 ---
 
 ## Routing: client vs server
 
-- **Client-side routing** (React Router in a SPA): the History API (`pushState`, Ch 17) changes
-  the URL and the router swaps components — no full page load. Fast nav, but the first load is
-  CSR-blank and you must handle 404s/deep links via a server fallback (`index.html` for all
-  routes).
-- **Server/file-based routing** (Next.js): each route maps to server-rendered output; navigation
-  can be server-driven or client-enhanced. Better first-load and SEO per route.
+- **Client-side routing** in a SPA with React Router. The History API (`pushState`, Ch 17) changes
+  the URL and the router swaps components. No full page load. Navigation is fast, but the first load is
+  blank until CSR finishes. You must handle 404s and deep links with a server fallback. The server sends `index.html` for all
+  routes.
+- **Server-based or file-based routing** in Next.js. Each route maps to server-rendered output. Navigation
+  can be server-driven or client-enhanced. This gives better first-load and SEO per route.
 
 ---
 
 ## Interview Discussion (reason first)
 
-**Q1. "CSR vs SSR — when each?"**
-> "CSR (our Vite SPA) is simplest and cheapest to host, great for authed app-like UIs where SEO
-> and first-paint-on-cold-load matter less — the tradeoff is a blank screen until the bundle runs.
-> SSR builds HTML per request for fast first paint and SEO (marketing/content pages), at server
-> CPU cost and a hydration step. I pick by first-paint/SEO needs vs server cost and freshness."
+**Q1. "CSR vs SSR: when each?"**
+> "CSR (our Vite SPA) is simplest and cheapest to host. It works great for authed app-like UIs where SEO
+> and first-paint-on-cold-load matter less. The tradeoff is a blank screen until the bundle runs.
+> SSR builds HTML per request for fast first paint and SEO (marketing and content pages). It costs server
+> CPU and adds a hydration step. I pick based on first-paint and SEO needs versus server cost and freshness."
 
 **Q2. "What is hydration and why is it a cost?"**
 > "After SSR sends HTML, React re-runs components on the client to attach listeners and rebuild
-> its tree over the existing DOM. You still ship/execute the JS, and there's a 'visible but not
-> interactive' gap. Heavy hydration hurts INP — which is why RSC/partial hydration ship less JS."
+> its tree over the existing DOM. You still ship and execute the JS. There is a 'visible but not
+> interactive' gap. Heavy hydration hurts INP. That is why RSC and partial hydration ship less JS."
 
 **Q3. "What do RSC solve?"**
-> "They render components on the server and ship their output, not their JS — so server components
-> add zero bundle and can access server data directly. Only interactive client components ship JS
-> and hydrate. It shrinks the JS you send and moves data/secrets server-side."
+> "They render components on the server and ship their output, not their JS. Server components
+> add zero to the bundle and can access server data directly. Only interactive client components ship JS
+> and hydrate. This shrinks the JS you send and keeps data and secrets server-side."
 
 *Scoring:* full = where/when-HTML grid + hydration cost + RSC ships-less-JS.
 
@@ -147,12 +141,12 @@ not relevant to a Vite SPA, but a strong "where's the boundary" interview topic.
 
 ## Common Mistakes
 
-- **Thinking SSR makes apps 'faster'** universally — it improves first paint/SEO but adds server
-  cost and hydration; interactivity still waits on JS.
-- **Using SSG for highly dynamic, per-user data** (it's stale till rebuild) — use SSR/ISR/CSR.
-- **Forgetting the SPA server fallback** → deep links 404.
-- **Assuming RSC = SSR** — RSC is about *which components ship JS*, not just where HTML is built.
-- **Over-engineering a simple authed dashboard with SSR/RSC** when CSR is fine.
+- **Thinking SSR makes apps faster universally.** It improves first paint and SEO, but adds server
+  cost and hydration. Interactivity still waits on JS.
+- **Using SSG for highly dynamic, per-user data.** Data is stale until you rebuild. Use SSR, ISR, or CSR instead.
+- **Forgetting the SPA server fallback.** This causes deep links to return 404.
+- **Assuming RSC equals SSR.** RSC is about *which components ship JS*, not just where HTML is built.
+- **Over-engineering a simple authed dashboard with SSR or RSC** when CSR works fine.
 
 ---
 
@@ -177,13 +171,13 @@ not relevant to a Vite SPA, but a strong "where's the boundary" interview topic.
 
 ## Summary
 
-- The strategy axis is **where/when HTML is built**: **CSR** (browser/runtime), **SSR**
-  (server/per-request), **SSG** (build time), **ISR** (SSG + revalidate), **RSC** (server
-  components ship no JS; client components do).
-- Tradeoffs: first-paint, freshness, server cost, SEO, interactivity. **Hydration** is the cost
-  of making SSR/SSG HTML interactive (ship + run JS; visible-but-not-interactive gap → INP).
+- The strategy axis is **where and when HTML is built**: **CSR** (browser at runtime), **SSR**
+  (server per request), **SSG** (at build time), **ISR** (SSG plus revalidation), **RSC** (server
+  components ship no JS, client components do).
+- Tradeoffs include first paint, freshness, server cost, SEO, and interactivity. **Hydration** is the cost
+  of making SSR or SSG HTML interactive. You ship and run JS. There is a visible-but-not-interactive gap that hurts INP.
 - **RSC** shrinks shipped JS by rendering non-interactive parts on the server.
-- **Client routing** (History API, Ch 17) swaps components without reload; needs a server
+- **Client routing** (History API, Ch 17) swaps components without a page reload. It needs a server
   fallback for deep links.
 
 ## Go deeper

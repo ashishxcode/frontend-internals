@@ -6,7 +6,8 @@ description: "Cursor, Claude Code, prompt engineering, verification"
 ---
 
 
-> Builds on every chapter. The JD explicitly mentions "extensive use of AI coding agents
+> Prerequisites: React component architecture (types, props, hooks, state patterns), testing practices (unit tests, integration tests, coverage analysis), and web security awareness (XSS, CSRF, authentication, authorization, injection). These are the areas where AI output most often introduces subtle bugs that reviewers must catch.
+> The JD explicitly mentions "extensive use of AI coding agents
 > (Claude Code, Cursor) to accelerate development while maintaining quality." Interviewer will
 > ask how you use AI and how you verify its output.
 
@@ -17,13 +18,13 @@ description: "Cursor, Claude Code, prompt engineering, verification"
 > **AI is a force multiplier for IMPLEMENTATION, not a replacement for THINKING. The**
 > **architectural decisions, tradeoff analysis, edge-case reasoning, and quality review**
 > **must come from you. AI writes the boilerplate, generates variations, finds patterns,**
-> **and speeds up iteration — but you own the correctness, performance, accessibility,**
+> **and speeds up iteration. But you own the correctness, performance, accessibility,**
 > **and security of every line it produces.**
 
-From "you own every line" you derive: never accept AI output without review, always test
-AI-generated code with the same rigour as handwritten code, use AI for what it's good at
-(tedious patterns, test generation, documentation, boilerplate) and avoid using it for what
-it's bad at (novel architecture, security-sensitive code, precise business logic).
+From "you own every line" you learn: never accept AI output without review. Always test
+AI-generated code the same way you test hand-written code. Use AI for what it is good at
+(tedious patterns, test generation, documentation, boilerplate). Avoid using it for what
+it is bad at (novel architecture, security-sensitive code, precise business logic).
 
 ```mermaid
 flowchart LR
@@ -86,36 +87,36 @@ flowchart LR
 - **Good prompts are specific, structured, and include context.** The quality of output is
   bounded by the quality of input.
 - **AI knows APIs but not your codebase.** You must provide the relevant types, conventions,
-  and existing patterns — or AI will invent them.
+  and existing patterns. Otherwise AI will invent them.
 - **Verification is non-negotiable for:** auth, payments, data mutations, security, a11y,
   and anything involving user data.
 
 ---
 
-## 1. Interview Answer — "How do you use AI coding tools?"
+## 1. Interview Answer: "How do you use AI coding tools?"
 
 ### SDE-2 answer (30 seconds)
 
-"My workflow is: I make the architecture decision first — file structure, component tree,
-data flow, state ownership. Then I write the types/interfaces and the function signatures.
-Only then do I use AI to generate the implementation body. I review every line AI produces
-before committing — specifically checking for: does this match our patterns, does it handle
-edge cases, is it accessible, does it have the right loading/error states. I never use AI for
-security decisions, auth logic, or data mutation logic — those I write and review manually."
+"My workflow is: I make the architecture decision first: file structure, component tree,
+data flow, state ownership. Then I write the types, interfaces, and function signatures.
+Only then do I use AI to generate the code body. I review every line AI produces
+before committing. I check: does this match our patterns, does it handle
+special cases, is it accessible, does it have the right loading and error states. I never use AI for
+security decisions, auth logic, or data mutation logic. I write and review those myself."
 
-### SDE-2 answer — expanded (2 minutes)
+### SDE-2 answer, expanded (2 minutes)
 
 "AI coding tools are the most impactful productivity gain since the linter. I use them in
 three modes:
 
 **Mode 1: Boilerplate generation.** When I need a TanStack Query hook, a React component with
-loading/error/data states, or a form with validation — I write the type signature and let AI
-fill in the implementation. For example: 'Generate a useQuery hook for fetching contacts with
+loading, error, and data states, or a form with validation, I write the type signature and let AI
+fill in the code. For example: 'Generate a useQuery hook for fetching contacts with
 search, pagination, and error handling.' I review the output, adjust for our conventions,
 and move fast.
 
 **Mode 2: Refactoring and patterns.** When I need to convert a useState pattern to useReducer,
-add memoization, or extract a custom hook — AI does the mechanical transformation. I verify
+add memoization, or extract a custom hook, AI does the mechanical work. I verify
 the logic is preserved.
 
 **Mode 3: Test generation.** AI is excellent at writing unit tests once the component exists.
@@ -130,7 +131,7 @@ linting, and the React DevTools profiler before committing."
 
 ## 2. Prompt Engineering Patterns
 
-### Good prompts — specific + structured
+### Good prompts: specific and structured
 
 ```text
 Create a React component `<ContactTable>` that:
@@ -244,9 +245,9 @@ git add -A && git commit
 
 ### Tab completion
 
-Cursor's tab completes inline — best for:
+Cursor's tab completes inline. It works best for:
 - Completing the next few tokens of a well-known pattern
-- Generating repetitive code (e.g., mapping over an array with a consistent structure)
+- Generating repetitive code (for example, mapping over an array with a consistent structure)
 - Writing test cases based on the test file's existing pattern
 
 ### Chat + Composer
@@ -261,7 +262,7 @@ Key feature: `@` references let you scope the AI to specific files, docs, or ter
 
 ### Cursor rules (similar to CLAUDE.md)
 
-`.cursorrules` in project root — same content pattern as CLAUDE.md.
+`.cursorrules` in project root. Same content pattern as CLAUDE.md.
 
 ---
 
@@ -271,7 +272,7 @@ Key feature: `@` references let you scope the AI to specific files, docs, or ter
 
 | Category | Verify |
 |---|---|
-| Auth/permissions | Never use AI output — write manually |
+| Auth/permissions | Never use AI output. Write manually |
 | Data mutations | Review for correctness, rollback, error handling |
 | Financial calculations | Unit test every path |
 | Accessibility | Run axe DevTools, keyboard test manually |
@@ -291,13 +292,13 @@ AI generates → TypeScript checks → Lint → Review (you) → Test → Ship
 
 ### Review checklist for AI code
 
-1. **Does it match our patterns?** — Or did AI invent a new convention?
-2. **Are all states handled?** — loading, empty, error, success, edge cases.
-3. **Are there unused imports/variables?** — AI often generates speculative code.
-4. **Is the component accessible?** — Roles, aria attributes, keyboard nav.
-5. **Are there performance issues?** — Unnecessary re-renders, missing keys, large deps.
-6. **Does it handle errors gracefully?** — Error boundaries, retry, user feedback.
-7. **Are there security issues?** — XSS in dangerouslySetInnerHTML, injection in URLs.
+1. **Does it match our patterns?** Or did AI invent a new convention?
+2. **Are all states handled?** Loading, empty, error, success, special cases.
+3. **Are there unused imports or variables?** AI often generates speculative code.
+4. **Is the component accessible?** Check roles, aria attributes, keyboard nav.
+5. **Are there performance issues?** Unnecessary re-renders, missing keys, large deps.
+6. **Does it handle errors well?** Error boundaries, retry, user feedback.
+7. **Are there security issues?** XSS in dangerouslySetInnerHTML, injection in URLs.
 
 ---
 
@@ -372,15 +373,15 @@ YOU: COMMIT
 
 ---
 
-## 8. Interview Questions — SDE-2 Answers
+## 8. Interview Questions: SDE-2 Answers
 
 ### Q: How do you ensure AI-generated code is correct?
 
 "I never ship AI code unreviewed. My review covers: does it match our patterns, are all
-states handled (loading/empty/error/data), are there security issues (XSS, injection), is
+states handled (loading, empty, error, data), are there security issues (XSS, injection), is
 it accessible (keyboard, screen reader), and does it pass TypeScript strict mode. I also
 write tests for any non-trivial AI-generated logic. The AI is my pair programmer who writes
-the first draft — I'm the senior who reviews and approves."
+the first draft. I am the senior who reviews and approves."
 
 ### Q: What's a time AI helped you a lot?
 
@@ -393,7 +394,7 @@ reviewed every hook for correctness and added cleanup functions the AI missed."
 
 "AI generated a `dangerouslySetInnerHTML` usage for rendering user-generated content.
 It was a security risk. I caught it in review and replaced it with proper React rendering.
-This is why I never trust AI output — it doesn't understand the security implications of
+This is why I never trust AI output. It does not understand the security impact of
 what it generates."
 
 ### Q: How do you prompt AI effectively?
