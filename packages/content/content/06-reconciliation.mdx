@@ -135,7 +135,7 @@ This pattern comes from a real senior frontend interview. The interviewer walked
 
 ### Q: Is this an unnecessary re-render?
 
-**It depends.** If the child is cheap (just renders some text), the re-render is negligible. React can re-render thousands of simple components in <1ms. The re-render is only "unnecessary" if the child is expensive (complex computation, large subtree, heavy animation).
+**It depends.** If the child is cheap (just renders some text), the re-render is negligible. React can re-render thousands of simple components in `{'<'}1ms`. The re-render is only "unnecessary" if the child is expensive (complex computation, large subtree, heavy animation).
 
 ### Q: How do you fix it?
 
