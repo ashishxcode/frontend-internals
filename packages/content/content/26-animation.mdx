@@ -7,83 +7,57 @@ description: "CSS animations, Framer Motion, gesture handling"
 
 ## The Problem That Hooks You
 
-You add a hover effect. The box moves right when the user hovers. You use `left` and `width` because they seem natural. The animation is choppy. The box stutters. CPU spikes. Users see jank.
+You add a hover effect. The box moves right when the user hovers. You use `left` and `width` because they seem natural. The animation stutters. CPU spikes. Users see jank.
 
-Or you build a modal that should fade out when closed. You toggle a state variable. The modal disappears instantly. No exit animation. The user is confused about where the modal went.
+Or you build a modal that should fade out when closed. You toggle a state. The modal disappears instantly. No exit animation.
 
-Or you build a list that reorders. Items jump to new positions instead of sliding smoothly.
-
-These are the three animation problems developers face daily: janky motion, missing exit transitions, and layout jumping.
-
-## Why It Happens
-
-Naive animation uses the obvious CSS properties that describe position and size: `left`, `top`, `width`, `height`, `margin`. These trigger the browser's layout step on every animation frame. For the full rendering pipeline explanation, see Ch 07.
-
-The key insight for animation: `transform` and `opacity` skip layout and paint entirely, running only on the compositor thread.
-
-For exit animations, React unmounts components the moment the condition becomes false. There is no hook for "wait, animate first, then unmount." Without a tool that delays removal, exit animations are impossible.
+These are the two animation problems developers face daily: janky motion and missing exit transitions.
 
 ## The One Insight
 
-**Smooth animation is about picking the right properties to animate.** Only `transform` and `opacity` are compositor-friendly. Everything else triggers layout or paint. That's the whole secret.
+**Only `transform` and `opacity` are compositor-friendly.** Everything else triggers layout or paint. That's the whole secret.
 
-Think of it like a painter. The compositor thread is like a separate artist who can move, rotate, and fade pre-painted layers on a canvas without asking the main artist to repaint anything. If you ask the main artist to repaint every frame (layout properties), you get lag. If you let the compositor artist do the moving (transform/opacity), it's smooth.
-
-A library like Framer Motion is a declarative layer over this truth. You declare start and end states. It interpolates compositor properties. It handles enter, exit, and layout transitions for you.
-
-Animation is communication. It shows continuity, cause, and effect. A button that moves down when pressed communicates that it was pressed. A modal that slides in from the right communicates its origin. Animation must be purposeful and must respect users who cannot tolerate motion.
-
-## Visualization
+Think of it like a painter. The compositor thread is a separate artist who can move, rotate, and fade pre-painted layers without asking the main artist to repaint anything. If you ask the main artist to repaint every frame (layout properties), you get lag. If you let the compositor artist do the moving (`transform`/`opacity`), it's smooth.
 
 ```mermaid
 flowchart LR
-  animate{animating what?} -->|left/width/top/margin| layout["Layout, Paint, Composite per frame = jank"]
+  animate{animating what?} -->|left/width/top/margin| layout["Layout + Paint + Composite = jank"]
   animate -->|transform/opacity| comp["Composite only (GPU) = smooth"]
 ```
 
-## Three Scenarios
+## The Two Scenarios
 
-**Scenario 1: move a card on hover the expensive way.**
-
+**The expensive way:**
 ```css
-.box { transition: left 300ms, width 300ms; }
-.box:hover { left: 200px; width: 400px; }
+.box { transition: left 300ms; }
+.box:hover { left: 200px; }
 ```
+`left` triggers layout every frame. The browser recalculates positions, repaints, then composites. Each frame runs the full pipeline.
 
-Internally, the browser sees `left` change. It marks the layout as dirty. Each frame of the transition runs the full pipeline: layout recalculates positions, paint paints new pixels, composite layers them. With many elements, each layout recalculates the entire subtree. Frames drop.
-
-**Scenario 2: move the same card with `transform`.**
-
+**The right way:**
 ```css
-.box { transition: transform 300ms ease, opacity 300ms; }
+.box { transition: transform 300ms ease; }
 .box:hover { transform: translateX(200px) scale(1.1); }
 ```
-
-Internally, the browser sees `transform` change. It marks only the composite step as dirty. The compositor thread on the GPU applies the transformation as a matrix multiplication. No layout. No paint. This stays smooth even at 60fps with hundreds of elements.
-
-**Scenario 3: exit animation without and with `AnimatePresence`.**
-
-Without `AnimatePresence`, when `isOpen` becomes `false`, React removes the modal from the virtual DOM immediately. The next commit removes the DOM node. The modal vanishes. No transition runs.
-
-With `AnimatePresence`, Framer Motion intercepts the removal. It keeps the element in the DOM. It changes the animation target to the `exit` props and starts the animation. When the animation completes, Framer Motion signals React to remove the element.
+`transform` is compositor-only. The GPU applies the transformation as a matrix multiplication. No layout. No paint. Smooth even at 60fps with hundreds of elements.
 
 ## How the Compositor Works
 
-The browser compositor is a separate thread from the main JavaScript thread (see Ch 07 for full pipeline details). When you change `transform`, the main thread marks the layer as dirty. The compositor thread reads the new value, applies it using the GPU, and composites the frame. The main thread never recalculates layout or repaints.
+The browser has four pipeline stages: Style → Layout → Paint → Composite. `transform` and `opacity` skip Layout and Paint entirely — the compositor thread on the GPU handles them without involving the main thread.
 
-When you change `left`, the main thread must recalculate layout. Layout is synchronous and blocking. The main thread walks the DOM tree, computes new geometries, and marks paint regions. Then paint runs. Only then does the compositor get new bitmaps to composite.
+When you change `left`, the main thread must recalculate layout (synchronous and blocking), then paint, then composite. That's three extra steps per frame.
 
-The FLIP technique that Framer Motion uses for `layout` animations works like this:
-- **First**: record the element's current position and size.
-- **Last**: record the element's new position after layout change.
-- **Invert**: calculate the difference. Apply a `transform` to make the element appear in its old position.
-- **Play**: animate the `transform` to zero, so the element slides to its new position.
+## The FLIP Technique
 
-All steps except the initial layout read use compositor-only properties. The `layout` prop does this automatically.
+For layout animations (items reordering, size changes), Framer Motion uses FLIP:
+1. **First** — record the element's current position.
+2. **Last** — let the layout change happen. Record the new position.
+3. **Invert** — apply a `transform` that makes the element appear in its old position.
+4. **Play** — animate the `transform` to zero, sliding the element to its new position.
 
-## Real World: Notification Toast System
+All animation frames use compositor-only properties. One layout read in step 1, then pure compositor work.
 
-You build a notification toast system. Toasts appear from the top right, stay for 3 seconds, then disappear.
+## Real World: Notification Toast
 
 ```jsx
 import { motion, AnimatePresence } from "framer-motion";
@@ -111,121 +85,48 @@ function ToastContainer({ toasts, onRemove }) {
 }
 ```
 
-What happens internally: When a toast is added, Framer Motion creates the element with `opacity: 0` and `transform: translateX(100px)`. On the next frame, it animates to `opacity: 1` and `transform: translateX(0)`. The browser composites these on the GPU. When the toast is removed, `AnimatePresence` keeps the element mounted. Framer Motion animates back to the exit values. After 150ms, it signals removal.
-
-Add accessibility: Use `useReducedMotion()` or a CSS media query to disable motion when the user prefers reduced motion.
+Without `AnimatePresence`, React unmounts the element the moment the condition becomes false. There's no hook for "animate first, then unmount." `AnimatePresence` keeps the element mounted during the exit animation, then signals React to remove it.
 
 ## Tradeoffs
 
-**CSS transitions vs Framer Motion.** CSS transitions work for simple state changes. They're lightweight and run off the main thread. But they can't orchestrate complex sequences, spring physics, or exit animations. Use CSS for simple hovers and toggles. Use Framer Motion for rich interactions and exit animations.
+**CSS transitions vs Framer Motion.** CSS transitions work for simple state changes — lightweight, off the main thread. Framer Motion handles complex sequences, spring physics, exit animations, and layout transitions.
 
-**requestAnimationFrame vs setInterval.** rAF aligns with the browser's paint cycle. It fires before the next paint, so you write one frame of changes at the right time. setInterval fires on a timer that drifts and has no relation to the paint cycle. Never use setInterval for animation.
+**requestAnimationFrame vs setInterval.** rAF aligns with the browser's paint cycle. setInterval fires on a timer that drifts and has no relation to paint. Never use `setInterval` for animation.
 
-**Opacity vs visibility.** `opacity` is compositor-friendly. `visibility` triggers paint. If you need to hide something smoothly, animate `opacity` to zero.
-
-**transform vs geometry.** `transform: translateX()` creates the same visual result as `left` for position changes. But `transform` is compositor-only (Ch 07 explains why). Always prefer `transform` for position.
+**opacity vs visibility.** `opacity` is compositor-friendly. `visibility` triggers paint. Animate `opacity` to zero for smooth hiding.
 
 ## Common Mistakes
 
-- Animate `top`, `left`, `width`, `height`, or `margin`. These trigger layout per frame.
-- Use `setInterval` for animation. Off-frame timing and drift.
-- Forget exit animations need `AnimatePresence`. React unmounts instantly.
-- Ignore `prefers-reduced-motion`. Motion makes some users physically ill.
-- Over-animate. Motion distracts instead of communicating.
-- Use `display: none` to hide animated elements mid-transition.
-
-## SDE-2 Interview Answer
-
-**Mid-level variant.** "I animate only `transform` and `opacity` because they skip layout and paint. Those properties run on the compositor thread on the GPU. Geometry properties like `left` and `width` trigger layout every frame, which causes jank. For exit animations, I use `AnimatePresence` because React unmounts immediately. I respect `prefers-reduced-motion` by disabling non-essential animation."
-
-**Senior variant.** "Animation performance comes down to the rendering pipeline. Layout properties rerun Style, Layout, Paint, and Composite on every frame. Transform and opacity run only Composite. I choose the tool based on complexity: CSS transitions for simple hovers, Framer Motion for rich interactions and exit animations, rAF for physics. I always include a reduced-motion path and measure with the Performance panel."
-
-**Engineering Lead variant.** "I enforce an animation system that defaults to compositor-only properties. We use Framer Motion for all UI animation because it handles enter, exit, and layout transitions uniformly. We define animation tokens so every animation feels consistent. The Performance panel is part of our review checklist. Every animation must have a purpose."
+- Animating `top`, `left`, `width`, `height`, or `margin` — triggers layout per frame.
+- Using `setInterval` for animation — off-frame timing and drift.
+- Forgetting exit animations need `AnimatePresence` — React unmounts instantly.
+- Ignoring `prefers-reduced-motion` — motion makes some users physically ill.
+- Over-animating — motion distracts instead of communicating.
 
 ## Follow-up Questions
 
-**Q1: What is the rendering pipeline and which stages does `transform` skip?**
-The browser rendering pipeline has four stages: **Style** (matching CSS selectors to elements), **Layout** (calculating geometry — position, size), **Paint** (filling pixels — colors, shadows, text), and **Composite** (layering painted bitmaps on the GPU). `transform` and `opacity` skip **Layout** and **Paint** entirely. When you change `transform`, the browser marks only the composite step as dirty. The compositor thread on the GPU applies the matrix multiplication without recalculating geometry or repainting pixels. This is why `transform: translateX(100px)` is always smoother than `left: 100px` — the latter triggers all four stages on every frame.
+**Q1: Why does animating `width` on a flex child cause other elements to move?**
+`width` triggers Layout. When a flex child's width changes, the browser recalculates geometry for the entire flex container and every sibling. `transform: scaleX()` avoids this — the element visually stretches without changing its layout box. Siblings stay in place.
 
-```
-Style → Layout → Paint → Composite
-  ↓       ↓       ↓        ↑
-  skip    skip    skip   transform/opacity only
-```
+**Q2: A user sets `prefers-reduced-motion: reduce`. How do you handle it globally?**
+Wrap motion components in a wrapper that checks `useReducedMotion()`. If true, override `initial`, `animate`, and `exit` to `{ opacity: 1 }` (no motion). Or add a CSS rule: `@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; } }`.
 
-**Q2: Why does animating `width` on a flex child cause other elements to move?**
-`width` triggers the **Layout** stage. When a flex child's width changes, the browser recalculates the geometry of the entire flex container — including the position of every sibling. Each frame of the animation runs this full recalculation, causing siblings to shift as the width interpolates. `transform: scaleX()` avoids this because it skips Layout. The element visually stretches without changing its layout box. Siblings stay in place because the browser's layout model doesn't know the transform happened — only the compositor sees it.
+**Q3: You have a drag-and-drop grid where items swap positions. After the animation, DOM order must match visual order for keyboard users. How?**
+Use Framer Motion's `layoutId` to animate position changes. Each item gets a stable `layoutId` based on its data ID. After the animation completes, commit the actual DOM reorder in `onAnimationComplete`. Keyboard tab order follows DOM order, so the DOM must eventually match the visual layout.
 
-```css
-/* This causes sibling movement — layout recalculates every frame */
-.flex-child { transition: width 300ms; }
-.flex-child:hover { width: 200px; }
-
-/* This is smooth — no layout, no sibling movement */
-.flex-child { transition: transform 300ms; }
-.flex-child:hover { transform: scaleX(1.5); }
-```
-
-**Q3: Walk through the FLIP steps and explain why it stays on the compositor.**
-FLIP stands for **First, Last, Invert, Play**: (1) **First**: Record the element's current position and size before the layout change (one layout read). (2) **Last**: Let the layout change happen normally — the browser computes the new position. (3) **Invert**: Calculate the delta between old and new positions. Apply a `transform` that moves the element *back* to its old position — so it visually stays put despite the DOM reorder. (4) **Play**: Animate the `transform` to `none` (or zero), smoothly sliding the element to its new position. Steps 3 and 4 use only `transform`, which is compositor-friendly. The only layout read happens once in step 1. All animation frames run on the compositor thread without triggering reflow or repaint.
-
-```jsx
-// Framer Motion's layout prop does FLIP automatically
-<motion.div layout>{content}</motion.div>
-```
-
-**Q4: A user sets `prefers-reduced-motion: reduce`. How do you handle it without rewriting every component?**
-Two approaches: (1) **Wrap the animation library's motion components.** Create a wrapper like `MotionDiv` that checks `useReducedMotion()` from Framer Motion. If the user prefers reduced motion, override `initial`, `animate`, and `exit` to `{ opacity: 1 }` (no motion, instant appearance). All components using `MotionDiv` automatically respect the preference.
-
-```jsx
-function MotionDiv({ initial, animate, exit, ...props }) {
-  const prefersReduced = useReducedMotion();
-  return (
-    <motion.div
-      initial={prefersReduced ? false : initial}
-      animate={prefersReduced ? false : animate}
-      exit={prefersReduced ? false : exit}
-      {...props}
-    />
-  );
-}
-```
-
-(2) **CSS approach**: Add a global rule `*, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }` inside a `@media (prefers-reduced-motion: reduce)` block. This disables all CSS transitions and animations globally without touching component code.
-
-**Q5: You have a drag-and-drop grid where items swap positions. After the animation, DOM order must match visual order for keyboard users. How?**
-Use Framer Motion's `layoutId` to animate position changes while keeping the DOM order intact until the animation completes. Each item gets a stable `layoutId` based on its data ID. When items swap, Framer Motion interpolates their positions using FLIP. After the animation finishes, commit the actual DOM reorder in a `useLayoutEffect` or `onAnimationComplete` callback.
-
-```jsx
-{items.map(item => (
-  <motion.div
-    key={item.id}
-    layoutId={item.id}
-    onAnimationComplete={() => {
-      // Commit DOM reorder after animation finishes
-      reorderDOM(items);
-    }}
-  >
-    {item.content}
-  </motion.div>
-))}
-```
-
-Alternatively, maintain the visual order in state and the DOM order separately — animate the visual positions, then sync the DOM after the transition. The key constraint: keyboard tab order follows DOM order, not visual order, so the DOM must eventually match the visual layout.
+**Q4: What's the difference between `transform: translateX(100px)` and `left: 100px` at the browser level?**
+`left` triggers Style → Layout → Paint → Composite on every frame. `transform` triggers Style → Composite only. The browser's compositor thread applies the matrix on the GPU without recalculating geometry or repainting pixels. This is why `transform` is always smoother for position changes.
 
 ## Mental Trigger
 
-Animate cheap props on the compositor.
+Animate cheap props on the compositor. Only `transform` and `opacity` skip layout.
 
 ## One Page Revision
 
 - Only `transform` and `opacity` are compositor-friendly. Everything else triggers layout or paint.
-- Rendering pipeline: Style, Layout, Paint, Composite. Transform and opacity skip Layout and Paint (Ch 07).
-- Compositor thread runs on GPU, separate from main thread.
-- Use CSS transitions for simple hover or toggle effects.
-- Use Framer Motion for rich interactions, spring physics, exit animations, layout transitions.
-- Use requestAnimationFrame for custom JS animation. Never use setInterval.
-- React unmounts components immediately. AnimatePresence delays removal for exit animations.
-- FLIP technique: First, Last, Invert, Play. Uses transform to animate layout changes smoothly.
-- Respect prefers-reduced-motion. Disable non-essential animation.
-- Measure with Performance panel. Confirm animation stays on compositor.
+- Pipeline: Style → Layout → Paint → Composite. Transform/opacity skip Layout and Paint.
+- FLIP: First, Last, Invert, Play. Animates layout changes using compositor-only properties.
+- `AnimatePresence` delays removal for exit animations. Without it, React unmounts instantly.
+- CSS transitions for simple hovers. Framer Motion for rich interactions and exit animations.
+- `requestAnimationFrame` for custom JS animation. Never `setInterval`.
+- Respect `prefers-reduced-motion`. Disable non-essential animation.

@@ -5,134 +5,100 @@ part: "Interview Preparation"
 description: "Machine-coding playbook, system design framework"
 ---
 
-> Prerequisites: all preceding chapters. This chapter synthesizes them. Core: architecture and state (Ch 11), TanStack Query (Ch 10), rendering and perf (Ch 08), a11y (Ch 23), testing (Ch 15). Pair with the interview guide (your interviewer's real flow) and the topic map (JD to topics).
+## Why This Matters
 
-## The Problem You Recognize
+You sit down for a machine-coding round. 45 minutes. Vague prompt. You start coding immediately. Build the happy path. Run out of time. Never handled loading, empty, or error state. Didn't mention accessibility or performance. The interviewer can't see your reasoning because you coded silently.
 
-You sit down for a machine-coding round. You have 45 minutes. The prompt is vague. You start coding immediately. You build the happy path. You run out of time. You never handled loading state, empty state, or error state. You did not mention accessibility or performance. The interviewer cannot see your reasoning because you coded silently. You fail even though your solution worked for the default case.
+You leave thinking, "But my code worked!" — and it did, but that's not what they were measuring. They were measuring whether you can own a feature end-to-end. The solution working for the default case is the bare minimum.
 
-Sound familiar? It's happened to almost every developer. You leave thinking, "But my code worked!" — and it did, but that's not what they were measuring.
+## The Core Idea
 
-## Why Most People Fail This
+**Interviews score your reasoning, not your answer.**
 
-Coding before clarifying solves the wrong problem. Silent solving hides your reasoning. Happy-path-only coding misses loading, empty, error, and edge cases. Over-generalizing to trap questions ("memo everything," "yes") shows lack of judgment. Not covering a11y or performance until prompted shows narrow thinking. Rambling project stories waste time and miss the point. These are all learned behaviors from practicing alone without feedback.
+The interviewer is asking: "Can I trust this person to own a feature end-to-end?" They want to see you clarify the problem, propose a solution, name the tradeoff, and handle the edges. A confident structured walk beats a silent perfect solution. "It depends, here is the tradeoff" is a strong answer, not a weak one.
 
-Think of it like this: you wouldn't build a house without checking the foundation first. Interviews are the same — they want to see you checking the foundation before you pour concrete.
+This is a learned behavior. Most people fail interviews not because they can't code, but because they practiced alone without feedback on what's actually being scored.
 
-## The One Thing That Changes Everything
+## The Four States
 
-Interviews score your reasoning, not your answer. Narrate the tradeoff out loud. For any UI problem cover the four states: loading, empty, error, data. Plus accessibility and performance. The interviewer is asking "can I trust this person to own a feature end-to-end?" Show the thinking: clarify, propose, name the tradeoff, handle the edges. A confident structured walk beats a perfect silent solution.
+Every data UI needs four states. Bring them up unprompted:
 
-From "they score reasoning plus four states" you learn how to run machine-coding (talk while you build, handle edges) and frontend system design (a repeatable framework). You understand why "it depends, here is the tradeoff" is a strong answer, not a weak one.
+1. **Loading** — skeleton or spinner
+2. **Empty** — "No results found"
+3. **Error** — retry button with message
+4. **Data** — the actual content
 
-## The Framework You Can Use Tomorrow
+Plus two cross-cuts: **accessibility** (keyboard support, ARIA) and **performance** (virtualization, memoization only when measured). These six concerns cover what interviewers evaluate for completeness.
 
-Frontend system-design framework:
+## The Machine-Coding Checklist
+
+Follow this order, narrating as you go. Talking through reasoning takes time from coding, but silent coding scores zero on reasoning. The tradeoff is worth it.
+
+1. **Clarify** (0-2 min): "Is this remote search or local filter? How many items? Keyboard support? Empty results behavior?" This buys time and shows ownership. State your assumptions out loud.
+2. **Shape state** (2-5 min): Input value (local), debounced value (custom hook or `useDeferredValue`), results array, status as discriminated union (`idle | loading | error | success`).
+3. **Build happy path** (5-15 min): Input onChange → debounced effect → API call → render results.
+4. **Add four states** (15-25 min): Loading skeleton, empty message, error with retry, data list.
+5. **Add edges** (25-35 min): Debounce (300ms), cancel stale requests with AbortController or TanStack Query's built-in cancellation, keyboard navigation (Up/Down/Enter/Escape), click-outside, ARIA attributes (`aria-expanded`, `role="listbox"`, `role="option"`). Highlight matching text in each result.
+6. **Performance pass** (35-40 min): Keys on list items. Memo only if measured slow. Virtualize only if list is very long.
+7. **Say what you'd add** (40-45 min): Unit tests for debounce hook, integration tests for dropdown, more a11y testing with screen readers.
+
+## The System Design Framework
 
 ```mermaid
 flowchart TD
   c[1. Clarify] --> d[2. Data layer]
   d --> r[3. Rendering]
   r --> s[4. State]
-  s --> rt[5. Real-time / updates]
+  s --> rt[5. Real-time]
   rt --> x[6. Cross-cuts]
-  c -.- c1["scale, data shape, read/write, real-time?, devices, constraints"]
-  d -.- d1["API shape, pagination cursor vs offset, cache (Ch 10), source of truth"]
-  r -.- r1["virtualization? what re-renders, the four states"]
-  s -.- s1["selection model, filters in URL, optimistic updates"]
-  rt -.- rt1["patch-in-place vs banner (Ch 08), scroll anchoring"]
-  x -.- x1["a11y (Ch 23), perf budget (Ch 08), errors (Ch 22), tradeoffs out loud"]
 ```
 
-## Walk Through It Step by Step
+Walk each step:
 
-Walk an autocomplete machine-coding session minute by minute.
+1. **Clarify**: scale, data shape, read/write, real-time, devices, constraints
+2. **Data layer**: API shape, pagination (cursor vs offset), cache strategy, source of truth
+3. **Rendering**: virtualization, what re-renders, four states
+4. **State**: selection model, filters in URL, optimistic updates
+5. **Real-time**: patch-in-place vs banner, scroll anchoring
+6. **Cross-cuts**: a11y, perf budget, errors, tradeoffs
 
-Minute 0-2: Clarify. "Is this a remote search or local filter? How many items? Keyboard support? What happens on empty results? On error?" State assumptions.
+For the contacts table: paginated API with cursor-based pagination, `useInfiniteQuery` for infinite scroll, virtualization with react-virtual (500K rows can't be DOM-mounted), WebSocket for real-time status changes patched via `setQueryData`.
 
-Minute 2-5: Shape state. You need the input value, debounced value, results array, and status (idle, loading, error, success). Use a discriminated union for status. The input value is local state in the autocomplete component. Debounced value comes from a custom hook.
+## The Trap Questions
 
-Minute 5-15: Build the happy path. The input onChange updates the local value. A useEffect watches the debounced value and calls the search API. Store results in state. Render a dropdown list.
+"Should you memoize every component?" — No. `useMemo` has a cost — it stores previous results, runs on every render to check dependencies, and adds code complexity. Most re-renders are cheap. Memo only measured hot spots identified with React DevTools Profiler. Premature optimization adds complexity without benefit. Also consider whether the parent creates new object references on every render — if so, memoizing the child won't help unless you also stabilize the parent's references.
 
-Minute 15-25: Add the four states. Loading shows a spinner or skeleton. Empty shows "No results found." Error shows a retry button with the error message. Data renders the results list.
+"Do you always use TypeScript?" — It depends. For new projects, yes — the safety pays off. For a quick prototype, maybe not. Name the tradeoff.
 
-Minute 25-35: Add edges. Debounce the input (300ms). Cancel stale requests with AbortController or TanStack Query. Handle keyboard: Up/Down to navigate, Enter to select, Escape to close. Add click-outside to close. Add aria-expanded and role=listbox for accessibility. Highlight the matching text in each result.
+The trap is testing judgment, not knowledge. Never answer "yes" or "no" to a question that has a tradeoff.
 
-Minute 35-40: Performance pass. Add keys to list items. Memo only if measured slow. Virtualize only if the list is very long.
+## Common Mistakes
 
-Minute 40-45: Say what you would add with more time. Unit tests for the debounce hook. Integration tests for the dropdown. More a11y testing.
+- **Coding before clarifying.** You solve the wrong problem.
+- **Only the happy path.** No loading, empty, or error states.
+- **Silent solving.** The interviewer cannot score reasoning they cannot hear.
+- **Over-generalizing to trap questions.** "Memo everything" fails the judgment test.
+- **Forgetting a11y and perf until prompted.** Bring them up unprompted.
+- **Rambling project pitch.** Keep STAR stories under 2 minutes and scoped to the job description. Spend 70% of prep time on coding, 30% on stories.
 
-## How They Actually Score You
+## Q&A
 
-The interviewer's scoring rubric evaluates four dimensions. Reasoning: did you clarify before coding, state tradeoffs, show your thinking? Completeness: did you cover loading, empty, error, data plus a11y and perf? Communication: was your narration clear and structured? Judgment: did you avoid over-generalizing, make reasonable tradeoffs, know when to optimize?
+**1. How do I narrate without slowing down?**
 
-Each dimension is scored 1-4. A passing score requires at least 3 in reasoning and judgment. Completeness and communication can be lower if the other two are strong. This is why clarifying and stating tradeoffs matters more than building the perfect solution.
+Speak your thinking as you type: "I'm reaching for a discriminated union because loading and success are mutually exclusive." Short sentences. State the what and the why. Don't narrate every keystroke — narrate decisions. Practice concise narration until it's natural.
 
-## Real World Example
+**2. What if I don't know the answer to a system design question?**
 
-Interviewer asks "design a contacts table page." The prompt is two sentences. The candidate who clarifies asks: "How many contacts? Is there real-time updating? What devices? Read-heavy or write-heavy? Any accessibility requirements?" This buys time and shows ownership. The candidate who starts coding builds a static table. The clarifier designs a virtualized, real-time updated, keyboard-navigable table with optimistic status toggles. Same prompt. Different outcome.
+Clarify first. The act of asking smart questions buys thinking time and shows ownership. "How many users? What's the read/write ratio? Any real-time requirements?" Then propose your best guess and name the tradeoff. "I'd start with X because Y, knowing the tradeoff is Z."
 
-The trap question: "Should you memoize every component?" The candidate who says "yes" fails. The candidate who answers "No. useMemo has a cost. I memo only measured hot spots. Most re-renders are cheap. Premature optimization adds complexity without benefit." This shows judgment and understanding of tradeoffs.
+**3. How should I handle "tell me about a time" behavioral questions?**
 
-## The Tradeoff You Need to Understand
+Keep stories under 2 minutes. Use STAR: Situation, Task, Action, Result. Focus on what you specifically did, not the team. Align the story to the job description's requirements — ownership, ambiguity, tools-not-guesswork.
 
-Speed vs completeness. In a 45-minute session, you cannot build a production app. The tradeoff is covering breadth of concerns (loading, empty, error, data, a11y, perf) vs depth of implementation in one area. Breadth wins interviews because it shows you think end-to-end.
+**4. What's the single highest-leverage thing I can practice?**
 
-Narration vs focus. Talking through your reasoning takes time from coding. But silent coding scores zero on reasoning. The tradeoff is worth it. Practice concise narration.
-
-Preparing STAR stories vs practicing coding. Both matter. STAR stories show behavioral fit. Coding shows technical ability. Spend 70% of prep time on coding and 30% on stories.
-
-## Where People Get Stuck
-
-- Coding before clarifying. You solve the wrong problem.
-- Only the happy path. No loading, empty, or error states.
-- Silent solving. The interviewer cannot score reasoning they cannot hear.
-- Over-generalizing to trap questions. "memo everything," "yes."
-- Forgetting a11y or perf until prompted. Bring them up unprompted.
-- Rambling project pitch. Keep it 30 seconds and scoped.
-
-## What You Sound Like in the Interview
-
-**Mid-level variant:**
-"For any UI problem, I cover loading, empty, error, and data states. I clarify the prompt before coding. I narrate my reasoning as I build. I add keyboard support and basic a11y. I handle the trap questions with a tradeoff: X has a cost, I apply it only when needed."
-
-**Senior variant:**
-"I structure every answer the same way. Clarify first. Propose with tradeoffs. Cover all four states plus a11y and performance. For machine-coding, I follow a checklist: clarify, shape state, build happy path, add states, add edges, perf pass, what I would add. For system design, I use the 6-step framework. The trap questions are judgment tests. I never over-generalize. I name the cost and the alternative."
-
-**Engineering Lead variant:**
-"I prepare my team for interviews with a repeatable structure. We practice the autocomplete and contacts table until the checklist is automatic. We review each other's STAR stories against the job description. The key insight I teach is: interviews score reasoning, not perfection. Clarifying, stating tradeoffs, and handling edges matters more than a flawless solution. I also ensure the team understands the scoring rubric so they know where to focus."
-
-## Practice These Five
-
-1. Build an autocomplete with debounce, cancel, four states, keyboard support, and a11y. Narrate throughout.
-
-Start by clarifying: "Is this remote search or local filter? How many items? Keyboard support required?" State your assumptions. Shape state: input value (local), debounced value (custom hook or `useDeferredValue`), results array, and status as a discriminated union (`idle | loading | error | success`). Build the happy path: onChange updates input, a debounced effect calls the API, store results in state. Add the four states: loading shows a skeleton, empty shows "No results found", error shows retry button, data renders the list. Add edges: 300ms debounce, cancel stale requests with AbortController (or TanStack Query's built-in cancellation), keyboard support (Up/Down to navigate, Enter to select, Escape to close), click-outside to close. Add `aria-expanded`, `role="listbox"`, and `role="option"` for accessibility. Highlight matching text in each result. Mention what you'd add with more time: unit tests for debounce, integration tests for dropdown behavior, more a11y testing with screen readers.
-
-2. Design the contacts table using the framework. Hit real-time, multi-select, and virtualization.
-
-Walk the 6-step framework. **Clarify:** How many contacts? Real-time updates? Multi-select needed? What actions on selected rows? **Data layer:** Paginated API with cursor-based pagination. TanStack Query with `useInfiniteQuery` for infinite scroll. Query key includes filters and sort params. **Rendering:** Virtualize with react-virtual since 500K rows can't be DOM-mounted. Show loading skeleton, empty state, error with retry, and data. **State:** Search text is local. Filters go to the parent page. Sort goes to URL params. Selection state uses a `Set` of IDs in local state or Zustand if cross-page selection is needed. **Real-time:** WebSocket pushes status changes. Patch individual rows with `setQueryData` so only visible rows re-render. **Cross-cuts:** a11y — keyboard navigation in the table, `aria-selected` on rows, skip-to-content link. Perf — virtualization is the big one, memoize row component only if measured slow. Trap: "should I memoize the whole table?" Answer: "No. Virtualization already limits DOM nodes. I memo individual rows only if profiling shows they re-render unnecessarily."
-
-3. "Should you memoize every component?" Answer the trap correctly.
-
-No. `useMemo` and `useMemo` have a cost — they store previous results in memory, they run on every render to check dependencies, and they add code complexity. Most re-renders are cheap and fast. The correct answer: "I memo only measured hot spots. I use React DevTools Profiler to identify components that re-render expensively or frequently with the same props. Premature optimization adds complexity without benefit. For most components, the re-render cost is negligible. I also consider whether the component receives new object references on every render — if the parent creates a new object inline, memoizing the child won't help unless I also stabilize the parent's references with `useMemo` or by moving state down."
-
-4. Tell an end-to-end ownership story in STAR format. Two minutes or less.
-
-**Situation:** "We had a contacts table with 200K rows that loaded slowly, had no search, and crashed on status updates because every mutation refetched the entire dataset." **Task:** "I owned the feature end-to-end — data fetching, UI, performance, and accessibility." **Action:** "I replaced the hand-rolled fetch with TanStack Query for caching. Added cursor-based pagination with `useInfiniteQuery`. Implemented a virtualized list with react-virtual so only visible rows rendered. Built optimistic status updates with cancel/snapshot/patch/rollback. Added keyboard navigation and ARIA attributes for accessibility. Set up MSW for integration tests covering loading, error, and success states." **Result:** "Initial load dropped from 4 seconds to 200ms. Status updates were instant with optimistic UI. The test suite covered all four states. The team adopted the pattern as a template for other list views."
-
-5. Design a notifications dropdown with unread counts and live updates.
-
-Follow the framework. **Clarify:** Frequency of notifications? Do users dismiss or just mark read? Unread count badge needed? **Data layer:** `GET /notifications` with pagination, `GET /notifications/unread-count` as a lightweight endpoint. TanStack Query caches both. **Rendering:** Dropdown renders a list. Four states: loading skeleton, empty "No notifications", error with retry, data list. Virtualize if 100+ items. **State:** Dropdown open/close is local `useState`. Read/unread filters use the query key. **Real-time:** SSE or WebSocket pushes new notifications. `setQueryData` prepends the new notification to the cache and increments the unread count. If the dropdown is open, the list updates instantly without a refetch. **Cross-cuts:** a11y — `aria-expanded` on the bell icon, `role="menu"` on the list, arrow keys navigate, Escape closes, Enter activates. Perf — virtualize long lists, debounce mark-all-read. Unread count is either derived from the cached list or a separate lightweight endpoint that's cheaper to poll.
+Build an autocomplete from scratch, narrating every decision, covering all four states, with keyboard support and ARIA. Do it three times. The first is rough. The second is structured. The third is smooth. That covers 80% of what interviewers evaluate.
 
 ## Mental Trigger
 
-Interviews score reasoning, not the answer.
-
-## One Page Revision
-
-- Interviews score reasoning. Clarify, propose, name the tradeoff, handle edges.
-- Every data UI needs loading, empty, error, data plus a11y and perf. Bring them up unprompted.
-- Machine-coding has a checklist order. System design has a 6-step framework.
-- Traps ("do X everywhere?") want a decision rule, not agreement.
-- STAR stories aligned to the job description: ownership, tools-not-guesswork, ambiguity, AI workflow.
-- Practice narration. Silent solving loses points even with a correct solution.
+**Interviews score reasoning, not the answer.**

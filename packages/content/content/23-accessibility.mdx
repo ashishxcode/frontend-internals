@@ -5,260 +5,61 @@ part: "Advanced Topics"
 description: "ARIA, keyboard nav, screen readers, semantic HTML"
 ---
 
-
-> **Prerequisites:** understanding of semantic HTML elements and their built-in focus/keyboard behavior, and awareness of how virtualized lists (which remove off-screen DOM nodes) create accessibility challenges for screen readers and find-in-page.
-
----
-
 ## The Button That Nobody Can Click
 
-Your app looks perfect visually. But for assistive technology, it is invisible. A clickable `<div>` shows nothing to a screen reader. It is not focusable. It has no keyboard behavior. You built a wall between your app and users who rely on accessibility tools.
+Your app looks perfect visually. But for assistive technology, it is invisible. A clickable `<div>` shows nothing to a screen reader — no role, no name, no keyboard behavior.
 
 ```jsx
-// Looks like a button, but for the accessibility tree it is nothing.
 <div className="btn" onClick={save}>Save</div>
 ```
 
-The browser builds two trees from your HTML. One is the DOM you know. The other is the ACCESSIBILITY TREE. Assistive technology reads the accessibility tree, not the DOM. Your `<div>` is a generic node with no role, no name, and no state. It might as well not exist.
+The browser builds two trees from your HTML. One is the DOM you know. The other is the **accessibility tree**. Assistive technology reads the accessibility tree, not your pixels. A `<div>` is a generic node with no role, no name, and no state. It might as well not exist.
 
-Here is the uncomfortable truth: **you have been building for sighted users only.** Every clickable `<div>`, every `outline: none`, every image without `alt` — you excluded users who cannot see or use a mouse. The fix is not hard. It just requires a different mental model.
+Here is the uncomfortable truth: every clickable `<div>`, every `outline: none`, every image without `alt` — you excluded users who cannot see or use a mouse.
 
-## Why "It Looks Fine" Is Never Enough
+## The Mental Model
 
-Developers assumed visual UI equals accessible UI. You see a styled `<div>` that looks like a button. You click it. It works. But the accessibility tree does not see styles or click handlers. It sees the underlying semantics. A `<div>` is a generic container. Period.
+The browser builds a second, invisible UI from your markup — the accessibility tree. Each node has a **role** (what it is), a **name** (what it is called), and **state** (checked/expanded/disabled).
 
-Before ARIA and modern accessibility practices, developers created custom widgets with `<div>` and JavaScript. Each team reinvented keyboard handling, focus management, and screen reader support. Most got it wrong. Users of assistive technology got broken or unusable experiences.
+Semantic HTML elements populate this tree correctly AND come with keyboard behavior for free. The rule: use the right element first. Reach for ARIA only to patch what no element provides.
 
-The fix is simple and cheap: use the right HTML element. `<button>` gives role, focusability, keyboard activation, and disabled state for free. No ARIA needed. No custom JavaScript.
+**Analogy:** Semantic HTML is a ramp. It works for everyone — wheelchair users, people with strollers, delivery carts. ARIA is like building a ramp out of spare parts. It works but requires more effort and is easier to get wrong. The existing ramp is free and maintained by the browser.
 
-```jsx
-<button onClick={save}>Save</button>   // role, focusable, Enter/Space, disabled. All free.
-```
-
-This is the entire philosophy: the right element is the cheapest, most correct accessibility.
-
-Think of it like building a ramp instead of carrying people upstairs. The ramp works for everyone — wheelchair users, people with strollers, delivery carts. Semantic HTML is the ramp. It is not extra work. It is the correct structure.
-
-## The Mental Model: The Second UI
-
-The browser builds a second, invisible UI from your markup. It is called the ACCESSIBILITY TREE. Screen readers, keyboards, and other assistive tech operate on that tree, not your pixels. Each node has a ROLE (what it is), a NAME (what it is called), and STATE (checked/expanded/disabled).
-
-Semantic HTML elements populate this tree correctly AND come with keyboard behavior for free. The rule is: use the right element first. Reach for ARIA only to patch what no element provides. Bad ARIA actively lies to the accessibility tree.
-
-The core insight: **ARIA changes the tree, but not the behavior.** Putting `role="button"` on a `<div>` tells the screen reader it is a button, but does not make it keyboard-operable. You still need to add tabIndex, onKeyDown, and all the behavior the native `<button>` provides.
-
-From "there is an accessibility tree driven by role/name/state" you can see why `<button>` beats a clickable `<div>`, why "no ARIA is better than bad ARIA," why keyboard and focus management matter, and how to make a virtualized table accessible.
-
-## Visualization
+The core insight: **ARIA changes the tree, but not the behavior.** `role="button"` on a `<div>` tells the screen reader it is a button, but does not make it keyboard-operable.
 
 ```mermaid
 flowchart LR
-  html["your HTML/ARIA"] --> tree["accessibility tree<br/>(role, name, state per node)"]
+  html["your HTML/ARIA"] --> tree["accessibility tree"]
   tree --> at["screen readers, keyboard, switch devices"]
-  sem["semantic element &lt;button&gt;"] -->|free role+keyboard+state| tree
-  div["&lt;div onClick&gt;"] -->|generic, no role/keyboard| tree
+  sem["<button>"] -->|free role+keyboard| tree
+  div["<div onClick>"] -->|generic, no role| tree
 ```
 
-Your HTML feeds the accessibility tree. Semantic elements like `<button>` give free role, keyboard, and state. Generic `<div>` elements give nothing.
-
-## Engine Simulation
-
-Take two elements that look the same visually:
-
-```jsx
-// Element 1: button element
-<button onClick={save} disabled={isSaving}>Save</button>
-
-// Element 2: styled div
-<div className="btn" onClick={save} aria-disabled={isSaving}>Save</div>
-```
-
-Both look like buttons on screen. Here is what the accessibility tree sees for each:
+## `<button>` vs `<div onClick>`
 
 | Property | `<button>` | `<div>` |
 |---|---|---|
-| Role | `button` | `generic` (no role) |
-| Focusable | Yes (Tab key) | No (need `tabIndex=0`) |
+| Role | `button` | `generic` |
+| Focusable | Yes (Tab) | No (need `tabIndex=0`) |
 | Keyboard | Enter/Space activate | Nothing (need `onKeyDown`) |
-| Disabled state | Built-in `disabled` attribute | Nothing (need `aria-disabled` plus logic) |
-| Activation sound | Screen reader announces "button" | Generic "clickable" or nothing |
+| Disabled | Built-in `disabled` | Nothing (need `aria-disabled` + logic) |
+| Screen reader | "Save, button" | "Save, clickable" or nothing |
 
-To make the `<div>` match the `<button>`, you must add:
-- `role="button"` for the role
-- `tabIndex={0}` for focusability
-- `onKeyDown` handler for Enter and Space
-- `aria-disabled` for disabled state
-- CSS for `:focus-visible`
+To make the `<div>` match, you must add `role="button"`, `tabIndex={0}`, `onKeyDown` for Enter/Space, `aria-disabled` for disabled state, and CSS for `:focus-visible`. You are reinventing a `<button>` — badly.
 
-You are reinventing a `<button>` badly. The semantic element gives all of this for free.
+## ARIA: When to Use It
 
-## Internal Implementation
+ARIA fills gaps in what native HTML can express. For example, `aria-live="polite"` announces dynamic content changes without moving focus. No HTML element provides this.
 
-The browser builds the accessibility tree from the DOM tree. Step by step:
+**Cardinal rules:**
+1. Don't use ARIA if a native element provides the semantics.
+2. Don't change native semantics (no `role="navigation"` on a `<button>`).
+3. All interactive ARIA controls must be keyboard operable.
+4. All interactive elements must have an accessible name.
 
-1. The browser parses HTML into the DOM tree.
-2. For each DOM node, it computes the accessible node. It looks at the HTML tag name first.
-3. `<button>` maps to `role="button"`. `<input type="checkbox">` maps to `role="checkbox"` with `aria-checked` state. `<a href>` maps to `role="link"`.
-4. These roles come with default behavior. The browser handles keyboard events. For example, pressing Enter on a `<button>` dispatches a click event.
-5. ARIA attributes override or augment the computed role, name, or state. `role="button"` on a `<div>` changes the role but does not add the keyboard behavior. That is "ARIA changes the tree, not behavior."
-6. The accessible name is computed from content, `aria-label`, `aria-labelledby`, or associated `<label>` element.
-7. The state comes from HTML attributes like `disabled`, `checked`, `aria-expanded`.
+Bad ARIA lies to assistive technology. `role="heading"` on a `<div>` that is not a heading confuses navigation. No ARIA is better than wrong ARIA.
 
-ARIA works in layers. You use it to fill gaps in what native HTML can express. For example, `aria-live="polite"` announces dynamic content changes without moving focus. No HTML element provides this natively.
-
-## Real World Example
-
-You maintain a custom combobox (autocomplete input). It has no native HTML equivalent. You build it with ARIA:
-
-```jsx
-<div role="combobox" aria-expanded={isOpen} aria-haspopup="listbox">
-  <input
-    aria-autocomplete="list"
-    aria-controls="listbox-id"
-    aria-activedescendant={activeOptionId}
-    value={value}
-    onChange={handleChange}
-    onKeyDown={handleKeyDown}
-  />
-  {isOpen && (
-    <ul role="listbox" id="listbox-id">
-      {options.map((opt) => (
-        <li
-          key={opt.value}
-          role="option"
-          aria-selected={opt.value === value}
-          id={`opt-${opt.value}`}
-        >
-          {opt.label}
-        </li>
-      ))}
-    </ul>
-  )}
-</div>
-```
-
-Every ARIA attribute here does something specific:
-- `role="combobox"` tells AT this is an autocomplete widget.
-- `aria-expanded` and `aria-haspopup` describe the widget's state.
-- `aria-autocomplete="list"` tells AT how the autocomplete works.
-- `aria-controls` links the input to the listbox.
-- `aria-activedescendant` tells AT which option is highlighted.
-- `role="listbox"` and `role="option"` make the list accessible.
-- `aria-selected` marks the current selection.
-
-You also implement keyboard handling: Arrow keys navigate options, Enter selects, Esc closes. This is the responsibility you take on when using ARIA. The browser provides none of it.
-
-## Tradeoffs
-
-**Semantic HTML vs custom widgets:** Semantic HTML is always preferred. It is free, correct, and maintained by browser vendors. Custom widgets (tabs, comboboxes, tree views) need ARIA plus full keyboard handling. Use them only when no native element works.
-
-**ARIA changes the tree, not behavior:** This is the most common source of bugs. `role="button"` on a `<div>` does not make it keyboard-operable. You must add tabIndex, onKeyDown, and every behavior the native `<button>` gives you.
-
-**No ARIA vs bad ARIA:** Wrong ARIA lies to assistive technology. It tells AT something false. For example, `role="heading"` on a `<div>` without proper heading semantics confuses navigation. No ARIA is better than wrong ARIA.
-
-**Accessibility vs virtualization:** Virtualization removes off-screen DOM nodes. This breaks table semantics and find-in-page. Fix with `aria-rowcount`/`aria-rowindex`, focus management, and a search path. This is a real tradeoff. Windowed lists save performance but cost accessibility.
-
-**Color as the only signal:** Error states that only use red text fail color-blind users and contrast requirements. Add icons, text labels, or patterns as secondary signals.
-
-## Common Mistakes
-
-- Clickable `<div>`/`<span>` instead of `<button>`/`<a>`. Not focusable, no keyboard behavior.
-- `outline: none` with no visible focus replacement. Keyboard users cannot see where they are.
-- Bad or excess ARIA (`aria-*` that contradicts the element). Worse than no ARIA.
-- Modals without focus trap, focus restore, or Esc handling.
-- Images without `alt`, inputs without labels, icon buttons without `aria-label`.
-- Color as the only signal. Fails color-blind users and contrast checks.
-
-## SDE-2 Interview Answer
-
-**Question: "How do you make a React application accessible?"**
-
-### Mid-level
-
-"I use semantic HTML first. Buttons should be `<button>`, links should be `<a>`. I add ARIA only when no native element fits. I make sure every interactive element is keyboard-operable with visible focus. Images have alt text. Forms have labels. I use `aria-live` for dynamic updates. I test with a screen reader."
-
-### Senior
-
-"Accessibility starts with the accessibility tree. The browser builds a second UI from your markup. It has role, name, and state per node. Assistive technology reads this tree, not the DOM.
-
-Semantic HTML populates this tree correctly for free. `<button>` gives role, focus, keyboard behavior, and disabled state. A clickable `<div>` gives none of it.
-
-I use ARIA to patch gaps that no native element covers. Custom widgets like comboboxes, tabs, and tree views need ARIA. But ARIA changes the tree, not behavior. I still add keyboard handling myself.
-
-The rules: native first. No ARIA beats bad ARIA. Every interactive ARIA widget must be keyboard-operable. Every control needs an accessible name.
-
-For virtualization, I use `aria-rowcount`/`aria-rowindex` so AT knows the total size. I manage focus when rows recycle. I provide a search path since Ctrl-F cannot see unmounted rows."
-
-### Engineering Lead
-
-"I establish accessibility as a non-negotiable baseline. The team uses semantic HTML by default. Linting catches `<div onClick>` without `role`. CI runs automated accessibility checks (axe-core). Manual testing includes screen reader verification.
-
-We provide accessible component primitives (based on Radix or shadcn) so developers do not recreate patterns. Modals have focus trap built in. Tabs have keyboard navigation built in. This prevents accessibility regressions at scale.
-
-I also make sure the team understands the virtualization tradeoff. When we use windowed lists, we budget time for the accessible version. It is not an afterthought.
-
-The organizational pattern: default to semantic HTML, lint it, audit it in CI, test it manually."
-
-## Follow-up Questions
-
-1. What is the accessibility tree, and what three things does each node carry?
-
-**Q1: What is the accessibility tree, and what three things does each node carry?**
-
-The accessibility tree is a **second, invisible UI** that the browser builds from your DOM. Assistive technologies (screen readers, switch devices, keyboard navigation tools) read this tree, not your visual pixels. The browser parses your HTML and computes an accessible representation for each node. Every node in the accessibility tree carries three things:
-
-1. **Role** — what the element *is*. A `<button>` has role `button`. A `<nav>` has role `navigation`. A `<div>` has role `generic` (nothing useful). The role tells assistive technology how to interpret the element and what behavior to expect.
-
-2. **Name** — what the element is *called*. Computed from text content, `aria-label`, `aria-labelledby`, or an associated `<label>`. A button labeled "Save" has name "Save". A screen reader announces "Save, button" — the name is how the user identifies the element.
-
-3. **State** — what condition the element is *in*. A checked checkbox has `aria-checked: true`. An expanded dropdown has `aria-expanded: true`. A disabled button has `aria-disabled: true`. States change as the user interacts — they tell assistive technology about the current condition.
-
-The browser computes these automatically from semantic HTML. `<button>` gives role=button, name from text content, and state from the `disabled` attribute. A `<div>` gives role=generic, no meaningful name, and no state. This is why semantic HTML is the foundation — it populates the accessibility tree correctly and for free. ARIA lets you override or augment these three properties when no native element provides what you need.
-
-2. List everything `<button>` gives you that a `<div onClick>` does not.
-
-**Q2: List everything `<button>` gives you that a `<div onClick>` does not.**
-
-A native `<button>` gives you all of these **for free** — zero extra code:
-
-| Feature | `<button>` | `<div onClick>` |
-|---|---|---|
-| **Role** in accessibility tree | `button` | `generic` (invisible to AT) |
-| **Focusable** via Tab key | Yes | No (need `tabIndex={0}`) |
-| **Enter/Space activation** | Built-in keyboard behavior | Nothing (need `onKeyDown` handler) |
-| **Disabled state** | `disabled` attribute — prevents click, removes from tab order, dims visually | Nothing (need `aria-disabled` + custom CSS + `pointerEvents: none` + keyboard prevention) |
-| **Focus-visible styling** | Browser provides default outline; `:focus-visible` works natively | No focus ring unless you add `tabIndex` + CSS |
-| **Form submission** | Submits parent `<form>` on Enter | Does nothing in a form context |
-| **Accessible name** | Computed from text content automatically | Generic "clickable" or nothing — need `aria-label` |
-| **Screen reader announcement** | "Save, button" | "Save, clickable" or nothing |
-
-To make a `<div>` match a `<button>`, you need: `role="button"`, `tabIndex={0}`, `onKeyDown` handling Enter and Space, `aria-disabled` for disabled state, CSS for `:focus-visible`, and `aria-label` if the text content isn't sufficient. You're reinventing the `<button>` — badly, and missing edge cases like form submission and focus management. The answer is always: use `<button>`.
-
-3. State the cardinal rules of ARIA. When is ARIA the wrong tool?
-
-**Q3: State the cardinal rules of ARIA. When is ARIA the wrong tool?**
-
-**Cardinal rules of ARIA:**
-
-1. **First rule of ARIA: Don't use ARIA if a native HTML element provides the semantics.** `<button>` beats `role="button"` on a `<div>`. `<a href>` beats `role="link"`. Native elements come with keyboard behavior, focus management, and state handling for free. ARIA only adds the role/name/state to the tree — it does NOT add behavior.
-
-2. **Second rule: Don't change native semantics.** Don't put `role="navigation"` on a `<button>`. Don't put `role="heading"` on a `<div>` that isn't a heading. The browser's native semantics are correct and well-tested.
-
-3. **Third rule: All interactive ARIA controls must be keyboard operable.** If you add `role="combobox"`, you must implement arrow key navigation, Enter to select, Esc to close, and focus management. ARIA announces the role but the browser provides none of the behavior.
-
-4. **Fourth rule: Don't use `role="presentation"` or `aria-hidden="true"` on focusable elements.** This hides them from assistive technology but they're still in the tab order — keyboard users can tab to invisible elements.
-
-5. **Fifth rule: All interactive elements must have an accessible name.** Use `aria-label`, `aria-labelledby`, or associated `<label>`. A button with no name is announced as just "button" — useless.
-
-**When ARIA is the wrong tool:**
-- When a native HTML element already provides what you need. Use the element, not ARIA.
-- When you can't implement the required keyboard interaction. Bad ARIA (role without behavior) is worse than no ARIA.
-- When you're using ARIA to fix bad HTML structure. Fix the HTML first.
-- When you're adding ARIA to compensate for visual-only design (like color-only error states). Fix the design.
-
-4. Build an accessible modal: show the name, focus trap, focus restore, and Esc handling.
-
-**Q4: Build an accessible modal: show the name, focus trap, focus restore, and Esc handling.**
+## Accessible Modal
 
 ```tsx
 function Modal({ isOpen, onClose, title, children }) {
@@ -267,52 +68,33 @@ function Modal({ isOpen, onClose, title, children }) {
 
   useEffect(() => {
     if (isOpen) {
-      previousFocus.current = document.activeElement; // save focus
-      modalRef.current?.focus();                       // move focus into modal
+      previousFocus.current = document.activeElement;
+      modalRef.current?.focus();
     } else if (previousFocus.current) {
-      previousFocus.current.focus();                  // restore focus on close
+      previousFocus.current.focus(); // restore focus
     }
   }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
-
     function handleKeyDown(e) {
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
+      if (e.key === "Escape") { onClose(); return; }
       if (e.key === "Tab") {
         const focusable = modalRef.current.querySelectorAll(
           'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
         );
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus(); // wrap to last
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus(); // wrap to first
-        }
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       }
     }
-
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
-
   return (
-    <div
-      ref={modalRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="modal-title"
-      tabIndex={-1}
-    >
+    <div ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="modal-title" tabIndex={-1}>
       <h2 id="modal-title">{title}</h2>
       {children}
       <button onClick={onClose}>Close</button>
@@ -321,57 +103,28 @@ function Modal({ isOpen, onClose, title, children }) {
 }
 ```
 
-**What this covers:**
-- **Name:** `aria-labelledby="modal-title"` links the dialog to its visible heading. The screen reader announces "Delete confirmation, dialog."
-- **Focus trap:** The `handleKeyDown` function intercepts Tab and Shift+Tab. When focus reaches the last focusable element, Tab wraps to the first. When focus is on the first and Shift+Tab is pressed, it wraps to the last. Focus cannot escape the modal.
-- **Focus restore:** When the modal opens, `document.activeElement` is saved in a ref. When it closes, focus is returned to that element. The user doesn't lose their place.
-- **Esc handling:** The keydown listener catches Escape and calls `onClose`. This is the expected behavior users anticipate.
-- **`aria-modal="true"`:** Tells assistive technology that content outside the modal is inert.
+This covers: name (`aria-labelledby`), focus trap (Tab wraps), focus restore (saves `document.activeElement`), Esc handling, `aria-modal="true"`.
 
-5. Make a virtualized table accessible. What breaks and how do you fix each issue?
+## Common Mistakes
 
-**Q5: Make a virtualized table accessible. What breaks and how do you fix each issue?**
+- Clickable `<div>`/`<span>` instead of `<button>`/`<a>` — not focusable, no keyboard behavior.
+- `outline: none` with no visible focus replacement — keyboard users cannot see where they are.
+- Bad or excess ARIA — worse than no ARIA.
+- Modals without focus trap, focus restore, or Esc handling.
+- Images without `alt`, inputs without labels, icon buttons without `aria-label`.
+- Color as the only signal — fails color-blind users.
 
-Virtualization (windowed rendering) removes off-screen DOM nodes for performance. This breaks several accessibility features:
+## Q&A
 
-**Issue 1: Screen readers can't find off-screen rows.** Rows not in the DOM don't exist for assistive technology. A user searching for "Alice" via Ctrl+F or screen reader search won't find her if she's not rendered.
+**Q: What is the accessibility tree?**
+A second, invisible UI the browser builds from your DOM. Assistive technologies read it, not your pixels. Each node carries a role (what it is), name (what it is called), and state (checked/expanded/disabled). Semantic HTML populates this correctly for free.
 
-**Fix:** Add `aria-rowcount` and `aria-rowindex` to the table. `aria-rowcount` tells AT the total number of rows (including virtual ones). `aria-rowindex` tells AT the position of each rendered row. This lets screen readers announce "Row 5 of 10,000" even though only 30 rows are in the DOM.
+**Q: ARIA changes the tree but not the behavior — what does that mean?**
+Putting `role="button"` on a `<div>` tells the screen reader it is a button. But it does not add keyboard handling, focus management, or disabled state. You must implement all of that yourself. The native `<button>` provides it for free.
 
-```html
-<table aria-rowcount={10000}>
-  {visibleRows.map((row, i) => (
-    <tr key={row.id} aria-rowindex={row.originalIndex + 1}>
-      ...
-    </tr>
-  ))}
-</table>
-```
-
-**Issue 2: Keyboard navigation breaks.** Arrow keys might move focus to a row that's about to be unmounted. Focus disappears into a removed DOM node.
-
-**Fix:** Implement explicit focus management. When the user arrows past a rendered boundary, scroll the list to bring the next row into view before moving focus. Use `aria-activedescendant` on a single focusable element (the table or a roving tabindex row) to track which row is active without moving actual DOM focus between rapidly mounting/unmounting rows.
-
-**Issue 3: Find-in-page (Ctrl+F) doesn't work.** Browser search only finds text in the DOM. Virtualized content isn't in the DOM.
-
-**Fix:** Provide a custom search/filter input that scrolls to and highlights matching rows. Don't rely on browser Ctrl+F for virtualized content. This is a known tradeoff — document it in your component's accessibility notes.
-
-**Issue 4: Table semantics are incomplete.** Without proper `<thead>`, `<tbody>`, `<th>`, and scope attributes, the table isn't navigable by assistive technology.
-
-**Fix:** Keep the table structure semantic: `<table>`, `<thead>`, `<tbody>`, `<th scope="col">`. Only the row content is virtualized. The header remains static in the DOM. Use `role="rowgroup"` for the virtualized section if needed.
+**Q: How do you make a virtualized table accessible?**
+Virtualization removes off-screen DOM rows — screen readers cannot find them. Fix: add `aria-rowcount`/`aria-rowindex` so AT knows total size. Implement explicit focus management for arrow keys. Provide a custom search input since Ctrl+F cannot find unmounted rows. Keep `<thead>`/`<th>` semantic structure.
 
 ## Mental Trigger
 
 **Second UI: role, name, state. Native first, ARIA for gaps.**
-
-## One Page Revision
-
-- Browser builds accessibility tree (role + name + state per node) from your HTML.
-- Semantic HTML gives free, correct accessibility.
-- ARIA changes the tree but not behavior. You add keyboard handling yourself.
-- Native first. No ARIA is better than bad ARIA.
-- Keyboard operability and visible focus are the baseline.
-- Modals need focus trap, focus restore, and Esc.
-- `aria-live="polite"` announces async updates.
-- Virtualized tables need `aria-rowcount`/`rowindex`, focus management, and a search path.
-- Lint, audit, and test accessibility in CI.

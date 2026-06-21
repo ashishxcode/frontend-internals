@@ -5,69 +5,37 @@ part: "React Internals"
 description: "Fiber architecture, render/commit phases, lanes"
 ---
 
-## The Problem That Kept React Up at Night
+## The Problem
 
-Imagine you're at a restaurant. You order a steak, and the waiter says, "Sure, but first I need to reorganize the entire kitchen." You sit there, starving, while they rearrange every pot, pan, and ingredient before cooking your meal. That's what pre-React-16 did to your UI.
+You're building a CRM dashboard with 10,000 contacts. User types in search. Each keystroke filters the list. Before React 16, that keystroke triggers a full recursive reconciliation of the entire component tree. The main thread is busy. The browser can't paint the input cursor. The user feels jank.
 
-Here's the real scenario: You're building a CRM dashboard with 10,000 contacts in a table. User types in the search box. Each keystroke filters the list. Before React 16, that keystroke triggers a full recursive reconciliation of the entire component tree. React walks every node, compares every element, produces a diff. During this time the main thread is busy. The browser cannot paint the input cursor moving. It cannot process the next keystroke. The user feels jank.
+This isn't a performance bug you can fix with memo. It's an architectural limit. A recursive tree walk cannot be paused. Its progress lives in the JS call stack. You cannot snapshot the call stack, yield to the browser, and resume later. Once reconciliation starts, it must finish.
 
-This isn't a performance bug you can fix with a memo or a useMemo. It's an architectural limit. A recursive tree walk cannot be paused. Its progress lives in the JS call stack. You cannot snapshot the call stack, yield to the browser, and resume later. Once reconciliation starts, it must finish — like that waiter who refuses to cook until the entire kitchen is reorganized.
-
-## Why the Old Way Broke Down
-
-The stack reconciler (React 15 and below) used recursive function calls to reconcile the virtual DOM tree. Each call pushed a frame onto the call stack. The recursion walked down to the leaves, then bubbled back up. This worked for small trees but failed at scale.
-
-The limitation is fundamental to recursion. The call stack is a runtime structure you don't control. You cannot pause a recursion midway, save its state, and hand the CPU back to the browser. The event loop needs an empty call stack to process a paint or input event. A long synchronous recursion is a long task. It blocks everything.
-
-Engineers tried workarounds: debouncing, manual virtualization, splitting work with setTimeout. These all required the developer to manage scheduling manually. They were brittle. React needed to own scheduling itself — like how a good restaurant manager doesn't ask each waiter to figure out table rotation; they build a system.
-
-## The Core Insight: Fiber is a Pausable Linked List
-
-Here's the mental model that makes everything click:
+## The One Insight
 
 **Before Fiber:** Rendering was like reading a book cover-to-cover in one sitting. You couldn't stop mid-chapter.
 
 **After Fiber:** Rendering is like reading a book with bookmarks. You read a chapter, put in a bookmark, and come back later. The bookmark is your Fiber node — it remembers exactly where you left off.
 
-Fiber turns rendering from one un-interruptible recursive function call into a list of small units of work that React can pause, abandon, or resume. A Fiber is a plain JS object, one per element. It is both a node in a linked tree and a unit of work with a priority. The render phase walks these units and can yield to the browser between them. The commit phase applies the result to the DOM in one synchronous, uninterruptible burst.
+Fiber turns rendering from one un-interruptible recursive call into a list of small units of work that React can pause, abandon, or resume. A Fiber is a plain JS object, one per element. It is both a node in a linked tree and a unit of work with a priority.
 
-From this single insight — rendering must be pausable — you derive everything else: why render must be pure (the WIP tree may be thrown away), why there are two trees (double buffering), what lanes are (priority labels on work), and what concurrent features actually buy.
-
-## Visualizing the Shift
-
-The old approach versus the new approach:
-
-```mermaid
-flowchart TB
-  subgraph Old["Stack reconciler (<=15): recursion = one long task"]
-    o1[reconcile root] --> o2[reconcile child] --> o3[reconcile child...] --> o4[done]
-    o4 -.->|main thread blocked the whole time| jank[no paint / no input = jank]
-  end
-  subgraph New["Fiber (16+): loop of yieldable units"]
-    n1[unit] --> q1{yield?}
-    q1 -->|browser needs time| paint[let browser paint/handle input]
-    paint --> n1
-    q1 -->|time left| n2[next unit] --> done2[finish -> commit]
-  end
-```
-
-A Fiber node is a plain JS object with these fields:
+## The Fiber Node
 
 ```
 Fiber {
   type        : 'div' | FunctionComponent | ...
-  key         : reconciliation identity used by the diff algorithm
+  key         : reconciliation identity
   child       : first child Fiber
   sibling     : next sibling Fiber
-  return      : parent Fiber (where to go up)
+  return      : parent Fiber
   pendingProps / memoizedProps
-  memoizedState : head of the hook linked-list for function components
+  memoizedState : head of the hook linked-list
   lanes       : priority bits for pending work
-  alternate   : the twin Fiber in the other tree (current <-> workInProgress)
+  alternate   : twin Fiber in the other tree (current <-> workInProgress)
 }
 ```
 
-Think of it like a linked list you can traverse with a pointer. `beginWork` goes down via `child`. `completeWork` goes up and over via `sibling`/`return`. That pointer is the resumable cursor — the bookmark that lets React pick up exactly where it left off.
+Think of it like a linked list you traverse with a pointer. `beginWork` goes down via `child`. `completeWork` goes up and over via `sibling`/`return`. That pointer is the resumable cursor — the bookmark.
 
 ```mermaid
 graph TD
@@ -76,41 +44,23 @@ graph TD
   A --> L[List]
   L --> I1[Item]
   L --> I2[Item]
-  R -. alternate .-> R2[HostRoot WIP]
 ```
 
-Lanes mark each update with a priority. Lower bits = higher priority.
+## Two Trees, Double Buffering
 
-```mermaid
-sequenceDiagram
-  participant U as User types in filter
-  participant R as React
-  U->>R: keypress (urgent lane) -> update input value
-  U->>R: startTransition(filter huge list) (transition lane)
-  R->>R: commit urgent input update FIRST (box stays responsive)
-  R->>R: render the expensive list in the background
-  Note over R: if another keypress arrives, abandon the in-progress list render and restart
-```
-
-## How It Actually Works Under the Hood
-
-Two trees exist at all times. `current` is what is painted on screen. On an update, React builds `workInProgress` by cloning fibers from `current` and applying changes.
+Two trees exist at all times. `current` is what's painted on screen. On an update, React builds `workInProgress` by cloning fibers from `current` and applying changes.
 
 The render loop:
 
 ```
-workInProgress = root    // start at root fiber
+workInProgress = root
 
 RENDER PHASE (interruptible):
-  cursor at App -> beginWork -> produce children -> cursor to Header -> ...
-  after each unit:
-    if (shouldYield()) {
-      // save cursor implicitly: workInProgress module variable holds position
-      return to browser
-    }
-    // next time browser schedules us, restore workInProgress and continue
-
-  ... eventually whole workInProgress tree is built and complete
+  while (workInProgress !== null && !shouldYield()) {
+    performUnitOfWork(workInProgress)
+  }
+  // if shouldYield() fired, workInProgress still points to next fiber
+  // browser schedules us again via MessageChannel, we resume
 
 COMMIT PHASE (synchronous, NOT interruptible):
   1. mutation: apply DOM ops from the diff
@@ -120,103 +70,42 @@ COMMIT PHASE (synchronous, NOT interruptible):
   5. passive effects (useEffect) flush
 ```
 
-Memory state during simulation:
+The screen always shows the consistent `current` tree until commit flips atomically. An interrupted, half-built `workInProgress` never touches the screen. This is why a render can be abandoned safely and why your render function must be pure.
 
-- **Stack**: contains the work loop frame. When React yields, this frame pops. The call stack is empty. Browser can paint.
-- **Heap**: contains the entire fiber tree. `workInProgress` is a module-level variable on the heap. It survives the yield.
-- **Restore**: browser's MessageChannel callback fires. React re-enters the work loop. `workInProgress` is still pointing at the same fiber. Execution resumes.
+## Lanes: Priority Labels
 
-The two trees exist so that an interrupted, half-built `workInProgress` never touches the screen. The screen always shows the consistent `current` tree until commit flips atomically. This is why a render can be abandoned safely (when a higher-priority update arrives). And why your render function must be pure: React may run it, throw away the WIP tree, and run it again. Side effects in render would fire on work the user never sees.
+Lanes use a 31-bit bitmask. Lower bit = higher priority.
 
-## Inside React's Engine
-
-React implements Fiber as a plain JS object. The work loop is a `while` loop (not recursion):
-
-```
-function workLoopSync() {
-  while (workInProgress !== null) {
-    performUnitOfWork(workInProgress)
-  }
-}
-
-function workLoopConcurrent() {
-  while (workInProgress !== null && !shouldYield()) {
-    performUnitOfWork(workInProgress)
-  }
-}
+```mermaid
+sequenceDiagram
+  participant U as User types in filter
+  participant R as React
+  U->>R: keypress (SyncLane) -> update input value
+  U->>R: startTransition(filter list) (TransitionLane)
+  R->>R: commit urgent input FIRST
+  R->>R: render expensive list in background
+  Note over R: new keypress? abandon list render, restart
 ```
 
-The only difference between sync and concurrent is the `!shouldYield()` guard. That single clause enables interruptible rendering.
+Key lanes:
+- **SyncLane** (bit 1): urgent input, click, keypress
+- **DefaultLane** (bit 5): normal state updates
+- **TransitionLanes** (bits 9-22): useTransition, Suspense
+- **IdleLane** (bit 28): background work
 
-`performUnitOfWork` does three things:
+When a higher-priority update arrives mid-render, React discards the WIP tree and rebuilds from scratch. It does not resume the abandoned render.
 
-```
-performUnitOfWork(fiber):
-  current = fiber.alternate
-  next = beginWork(current, fiber, renderLanes)
-  fiber.memoizedProps = fiber.pendingProps
-  if next is null:
-    completeUnitOfWork(fiber)
-  else:
-    workInProgress = next
-```
+## Real World: CRM Search Filter
 
-`beginWork` is a switch on fiber tag. For a function component, it calls your function. For a host component (div, span), it processes props. It returns the first child fiber or null.
-
-`completeWork` runs when a fiber has no more children. It walks up via `return` and over via `sibling`. For host components, it creates or updates the real DOM node. It also calls `bubbleProperties` which ORs child flags into the parent. This tells the commit phase which subtrees changed.
-
-Lanes use a 31-bit bitmask. Lower bit = higher priority. Operations are bitwise:
-
-```
-mergeLanes(a, b) = a | b
-getHighestPriorityLane(lanes) = lanes & -lanes
-isSubsetOfLanes(set, subset) = (set & subset) === subset
-```
-
-Concrete lane values (approximate):
-
-- SyncLane: bit 1 (urgent input, click, keypress)
-- InputContinuousLane: bit 3 (continuous input like scroll)
-- DefaultLane: bit 5 (normal state updates)
-- TransitionLanes: bits 9-22 (useTransition, Suspense)
-- IdleLane: bit 28 (background work)
-
-Priority starvation is prevented by `markStarvedLanesAsExpired`. Transition lanes that wait too long get promoted to sync priority.
-
-The scheduler uses `MessageChannel` to yield to the browser, not `requestIdleCallback` or `setTimeout`. `setTimeout` has a 4ms minimum clamp. `requestIdleCallback` has low browser support. `MessageChannel.postMessage` schedules a macrotask immediately. When the callback fires, React records the start time, runs work in the concurrent loop, and checks `shouldYield()` after each unit. Yielding happens when approximately 5ms have elapsed (configurable via `forceFrameRate`).
-
-When a higher-priority update arrives mid-render:
-
-```
-ensureRootIsScheduled(root, newLanes)
-  prepareFreshStack(root, newLanes)
-    // Discards in-progress WIP tree
-    // Clones fresh WIP from root.current
-    // Restarts render from root
-```
-
-React does not resume the abandoned render. It throws the WIP tree away and rebuilds from scratch. This is why render functions must be idempotent. They may run, be discarded, and run again with zero side effects.
-
-## A Real-World Example: The CRM Dashboard
-
-Let's say you're building a CRM sales dashboard with a table of 10,000 leads. Each row has 15 columns. The user types a company name into the search filter.
-
-Without Fiber: each keystroke triggers a full reconciliation. React walks 10,000 rows recursively. The main thread is blocked for 60ms. The search input feels heavy. Characters appear late. The user perceives the app as sluggish.
-
-With Fiber + `startTransition`:
-
-```
+```js
 function SearchFilter() {
   const [query, setQuery] = useState('')
   const [isPending, startTransition] = useTransition()
 
   function handleChange(e) {
-    // urgent: update input value immediately
-    setQuery(e.target.value)
-
-    // non-urgent: filter the table at low priority
+    setQuery(e.target.value)            // SyncLane: urgent
     startTransition(() => {
-      setFilterText(e.target.value)
+      setFilterText(e.target.value)     // TransitionLane: low priority
     })
   }
 
@@ -230,149 +119,29 @@ function SearchFilter() {
 }
 ```
 
-The input state update gets a SyncLane (highest priority). The filter update gets a TransitionLane (low priority). React commits the input change first. The input stays responsive. The table re-render runs in background slices. If the user types another character, React abandons the in-progress table render and starts over with the new query. The user never sees stale intermediate results.
+The input gets SyncLane — commits immediately, input stays responsive. The table filter gets TransitionLane — runs in background slices. If the user types again, React abandons the in-progress table render and starts fresh.
 
-This pattern works for search, tab switching, navigation, and any expensive render that should not block user input.
+## Common Mistakes
 
-## The Tradeoffs: What You Gain and What You Pay
-
-**Advantages:**
-- Responsive UI during large renders. Input and paint are never blocked.
-- Priority-based scheduling. Urgent updates preempt non-urgent ones.
-- Concurrent features unlocked: Suspense, transitions, offscreen rendering.
-- Abandonable renders. Work can be thrown away if obsolete.
-
-**Disadvantages:**
-- Memory: two full tree copies instead of one. Each fiber is a JS object with many fields. Larger apps see noticeable memory overhead.
-- CPU overhead: linked list traversal is slower than array iteration. The work loop checks shouldYield after every unit.
-- Complexity: the reconciler is significantly more code. Harder to debug. Stack traces for re-render issues are harder to read.
-- Developer experience: render functions must be pure. Side effects in render cause hard-to-find bugs. StrictMode double-invokes in dev to expose this, but developers find it surprising.
-- Learning curve: fiber architecture, lanes, render/commit phases, and concurrent mode are concepts developers must understand to avoid pitfalls.
-
-## Common Traps to Avoid
-
-**"Fiber is the virtual DOM."**
-The element tree ({type, props}) is the VDOM description. Fibers are the persistent work and instance nodes that perform reconciliation. They serve different purposes. Fibers exist across renders. Element objects are created fresh every render.
-
-**Side effects in render, assuming it runs once.**
-React may run your component, discard the result, and re-run it. This happens when a higher-priority update interrupts a render, or in StrictMode's dev double-invoke. Side effects in render (subscribing to a store, starting a fetch, mutating a ref) fire for renders the user never sees. Effects belong in commit-phase hooks like useEffect.
-
-**Thinking commit is interruptible.**
-The commit phase is synchronous and uninterruptible. That is why React keeps commit work minimal. DOM mutations, layout effects, and passive effects all run in one shot. The user never sees a half-applied tree.
-
-**Believing useTransition makes things faster.**
-It does not make render faster. It makes render interruptible and lower priority. Total CPU work may be equal or more because React may restart the render. The benefit is perceived responsiveness. Urgent input gets priority while expensive renders run in the background.
-
-## SDE-2 Interview Answer
-
-**"Why did React introduce Fiber?"**
-
-*Mid-level answer:*
-"React introduced Fiber to solve the jank problem. Before Fiber, reconciliation was a recursive walk that blocked the main thread. If you had a large component tree, the browser would freeze during updates. Fiber breaks the work into small units that can be paused and resumed. This lets the browser handle user input and paint between units of work. The result is a smoother user experience."
-
-*Senior answer:*
-"The fundamental problem was that the old stack reconciler used recursion, which lives on the JS call stack. You cannot pause a recursive call midway, save its state, and resume later. Fiber moves rendering state from the call stack into a data structure, a linked list of fiber nodes. Each fiber stores child, sibling, and return pointers, so React can walk the tree iteratively. This makes render interruptible.
-
-The render phase becomes a cooperative loop: do a unit of work, check if the browser needs time, yield if necessary, resume later. The commit phase stays synchronous and atomic. This architecture enables React to schedule work by priority. Urgent updates (clicks, typing) preempt non-urgent ones (transition renders). The result is not faster render, but better perceived responsiveness.
-
-From this single architectural change, React got concurrent rendering, Suspense, useTransition, useDeferredValue, and automatic batching. Fiber is not about speed. It is about scheduling."
-
-*Engineering Lead answer:*
-"The decision to rewrite the reconciler was about scheduling, not about raw speed. Pre-Fiber, each render pass was an all-or-nothing synchronous recursion. This violated a fundamental constraint of the browser's event-driven model: long tasks block painting and input processing.
-
-Fiber reframes rendering as a cooperative scheduling problem. Each fiber node is a unit of work with a priority lane. React owns the scheduling loop entirely. It yields control to the browser via the MessageChannel API after approximately 5ms slices. The key insight is that rendering must be pausable and abortable. This purity constraint cascades through the entire API: render functions must be idempotent, effect cleanup is explicit, and hooks replaced class lifecycles because lifecycles assumed a single committed render.
-
-The double buffering pattern (current tree vs workInProgress tree) guarantees the user never sees inconsistent state. A higher-priority update mid-render causes React to discard the WIP tree and rebuild from scratch. This is safe because the current tree is still on screen.
-
-From a team perspective, the linked list structure is easier to test and reason about than recursive trees. The migration was painful, but it unlocked concurrent features and positioned React for the next five years. The cost was significant: more memory, more code complexity, and a steeper learning curve for developers. But the benefit — predictable jank-free rendering at scale — is worth it."
-
-## Follow-up Questions
-
-**Q1: Draw the fiber tree for `<App><Header/><List><Item/></List></App>`. Label child, sibling, return, and alternate.**
-
-The fiber tree has five nodes connected by three pointer types:
-
-```
-HostRoot
-  child → App
-            child → Header
-                      sibling → List
-                                 child → Item
-            return → App
-  return → (null, root fiber)
-```
-
-Specifically:
-- **HostRoot**: `child = App`, `return = null`, `alternate = HostRoot-WIP`
-- **App**: `child = Header`, `return = HostRoot`, `alternate = App-WIP`
-- **Header**: `child = null` (no children), `sibling = List`, `return = App`, `alternate = Header-WIP`
-- **List**: `child = Item`, `sibling = null`, `return = App`, `alternate = List-WIP`
-- **Item**: `child = null`, `sibling = null`, `return = List`, `alternate = Item-WIP`
-
-The `alternate` pointer connects each fiber to its twin in the other tree (current ↔ workInProgress). This double-buffering pattern means there are always two copies of each fiber during a render — the current tree (painted on screen) and the work-in-progress tree (being built). React walks the tree using `child` to go down, `sibling` to go right, and `return` to go up. See Ch 03 for how the render phase calls component functions during `beginWork`.
-
-**Q2: Explain how React resumes a render after yielding. Where is the cursor stored? Why could the old reconciler not do this?**
-
-React stores the cursor in a module-level variable called `workInProgress`. When the concurrent work loop runs (`workLoopConcurrent`), it checks `shouldYield()` after each `performUnitOfWork` call. If time is up, the while loop exits. `workInProgress` still points to the next fiber to process — it is a heap-allocated variable that survives across tasks. When the browser schedules the next frame via `MessageChannel`, the callback re-enters the work loop. It reads `workInProgress` and continues from exactly where it left off. No state is lost.
-
-The old stack reconciler could not do this because its progress lived in the JS call stack as recursive function frames. Each `reconcileChildren` call pushed a frame. To pause, you would need to save the entire call stack — every frame's local variables, return addresses, and intermediate state — into a data structure. This is not possible in JavaScript. You cannot snapshot the call stack, yield to the browser, and restore it later. Fiber solved this by moving all reconciliation state into heap-allocated fiber objects with explicit `child`/`sibling`/`return` pointers. The linked list IS the saved state. See Ch 01 for why the stack is fixed-size and non-pausable.
-
-**Q3: Why does double buffering make abandoning a render safe? Walk through what happens if a higher priority update arrives mid-render.**
-
-The current tree (`root.current`) is the tree painted on screen — it is the consistent, committed UI the user sees. The work-in-progress tree is built in memory, invisible to the user. If a higher-priority update arrives (e.g., a keystroke during a transition render), React calls `prepareFreshStack`. This discards the in-progress WIP tree (it was never committed, never painted — just memory that gets garbage collected) and creates a new WIP tree by cloning from `root.current`. The render restarts from the root with the latest state.
-
-The user never sees flicker or partial state because the current tree was never modified. The WIP tree is a shadow copy that can be thrown away at any point. After the high-priority render completes, its WIP tree is committed — `root.current` is swapped to point at the new tree. This is safe because:
-1. The commit happens atomically (synchronous, uninterruptible)
-2. The current tree is always valid until the swap
-3. Render is pure (no side effects), so discarding WIP is free
-
-See Ch 03 for why render purity is a consequence of this architecture, not an arbitrary rule.
-
-**Q4: What is a lane? Walk through a typing-while-filtering example with startTransition. What lane does each update get? How does preemption work?**
-
-A lane is a 31-bit bitmask that labels an update with a priority level. Lower bit index = higher priority. Key lanes: SyncLane (bit 1, urgent input), DefaultLane (bit 5, normal updates), TransitionLanes (bits 9-22, `useTransition`/`Suspense`), IdleLane (bit 28, background).
-
-Typing example:
-1. User types "a". `onChange` fires, calling `setQuery("a")`. This gets **SyncLane** (urgent — input must feel responsive).
-2. Inside `startTransition`, `setFilterText("a")` is called. This gets **TransitionLane** (non-urgent — filtering a huge list can wait).
-3. React schedules both updates. SyncLane has higher priority. It renders and commits first — the input shows "a" immediately.
-4. TransitionLane render starts in the background. It walks the large list, computing filtered results.
-5. User types "b" before the transition finishes. `setQuery("b")` gets SyncLane. React sees: new SyncLane > in-progress TransitionLane. It abandons the transition render (discards WIP tree), commits the urgent "b" input update, then starts a new transition render with the latest query "b".
-
-Preemption works because lanes are compared via bitwise operations: `getHighestPriorityLane(mergeLanes(newLanes, existingLanes))` picks the lowest set bit. SyncLane always wins over TransitionLane. The abandoned transition work is wasted, but the user never sees stale filtered results — they only see the final state. See Ch 08 for how transitions reduce perceived latency.
-
-**Q5: Render phase vs commit phase: which is interruptible, where do useLayoutEffect and useEffect fire, and why? What happens if a useEffect triggers a state update during commit?**
-
-**Render phase**: interruptible. React calls component functions, reconciles old vs new elements, builds the work-in-progress tree. No DOM is touched. Can be paused, abandoned, or restarted. `shouldYield()` is checked after each fiber unit.
-
-**Commit phase**: synchronous, uninterruptible. Three steps:
-1. **Mutation**: apply DOM operations (insert, update, delete nodes) from the diff
-2. **Layout effects**: `useLayoutEffect` callbacks fire synchronously, before the browser paints. This is when you measure DOM geometry or apply synchronous DOM mutations (e.g., focusing an input, measuring element dimensions). The browser has not painted yet, so the user sees the final state.
-3. **Browser paint**: the compositor thread rasterizes and displays the frame
-4. **Passive effects**: `useEffect` callbacks fire after paint. This is for side effects that do not need to block the visual update (data fetching, subscriptions, logging).
-
-**Why this order**: layout effects must run before paint because they may read or mutate DOM geometry. If they ran after paint, the user would see a flash of unmeasured/unmutated content. Passive effects run after paint because they are non-blocking — the visual update is already committed.
-
-**If useEffect triggers a state update during commit**: React schedules a new render synchronously. This is called a "flush sync." The current commit finishes, then React immediately processes the new update. It is the mechanism behind patterns like `useEffect(() => setState(derived), [deps)]` for derived state. However, this causes an extra render and can lead to cascading updates if not guarded. It is generally discouraged — prefer computing derived state during render or using `useMemo`. See Ch 03 for how `flushSync` bypasses the microtask batch.
+- **"Fiber is the virtual DOM."** The element tree ({type, props}) is the VDOM description. Fibers are the persistent work and instance nodes.
+- **Side effects in render.** React may run your component, discard the result, and re-run it. Effects belong in commit-phase hooks.
+- **Thinking commit is interruptible.** It's synchronous and atomic. The user never sees a half-applied tree.
+- **Believing useTransition makes things faster.** It makes render interruptible and lower priority. Total CPU work may be equal. The benefit is perceived responsiveness.
 
 ## Mental Trigger
 
-Fiber = pausable linked-list render.
+**Fiber = pausable linked-list render.**
 
-## One Page Revision
+## Q&A
 
-- Pre-Fiber: synchronous recursive tree walk. Cannot pause. Blocks main thread. Jank.
-- Fiber solution: linked list of work units. Each fiber = JS object with child/sibling/return links.
-- Work loop: `while(workInProgress && !shouldYield()) { performUnitOfWork() }`
-- Render phase: interruptible, pure, builds WIP tree. Can be abandoned.
-- Commit phase: synchronous, applies DOM, flips `root.current = workInProgress`.
-- Two trees: current (painted) and workInProgress (being built). Double buffering.
-- Lanes: 31-bit priority mask. Lower bit = higher priority. SyncLane > TransitionLanes.
-- useTransition/startTransition: marks update with transition lane. Lower priority than input.
-- useDeferredValue: trailing version of a value at low priority.
-- Scheduler: MessageChannel for macrotask scheduling. ~5ms yield interval.
-- Higher priority interrupt: discards WIP tree, restarts from root. Render must be pure.
-- Memory: two full tree copies. More objects but enables scheduling.
-- Key tradeoff: more total work possible, but perceived responsiveness improves.
-- Common mistake: Fiber = VDOM. Wrong. VDOM is element tree. Fiber is work instance.
-- Render purity is a consequence of abortable renders, not an arbitrary rule.
+**Q: How does React resume a render after yielding?**
+The cursor is stored in a module-level variable `workInProgress` on the heap. When the browser schedules the next frame via MessageChannel, the callback re-enters the work loop. `workInProgress` still points to the next fiber. Execution resumes from where it left off.
+
+**Q: Why does double buffering make abandoning a render safe?**
+The current tree (painted on screen) is never modified during render. The WIP tree is a shadow copy that can be thrown away. When a higher-priority update arrives, React discards the WIP tree (just memory, gets GC'd) and rebuilds from `root.current`. The user never sees flicker.
+
+**Q: What is a lane? Walk through a typing-while-filtering example.**
+A lane is a 31-bit priority mask. User types "a" → `setQuery("a")` gets SyncLane. Inside `startTransition`, `setFilterText("a")` gets TransitionLane. SyncLane renders and commits first — input shows "a" immediately. TransitionLane renders in background. User types "b" before transition finishes → React abandons the transition, commits "b", starts new transition.
+
+**Q: Render phase vs commit phase — which is interruptible?**
+Render phase is interruptible — React calls components, reconciles, builds WIP tree. No DOM touched. Can be paused, abandoned, restarted. Commit phase is synchronous and uninterruptible — DOM mutations, layout effects, browser paint, passive effects all run in one shot.

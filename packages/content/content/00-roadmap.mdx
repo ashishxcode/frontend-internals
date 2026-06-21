@@ -5,42 +5,13 @@ part: "Overview"
 description: "Full topic map and learning path"
 ---
 
-## Problem
+## Why This Exists
 
-You ship a CRM dashboard. The CEO clicks "Export to CSV" and nothing happens for two seconds. Your team argues about it — the React dev blames the API, the backend dev blames React, and the ops person says the server is fine. Meanwhile, the CEO is still staring at a blank screen.
+The CEO clicks "Export to CSV." Nothing happens for two seconds. The React dev blames the API, the backend dev blames React, and ops says the server is fine. Nobody can trace that click from button to screen.
 
-Here's the uncomfortable truth: *nobody* can trace that click from the button to the screen. They each know their piece. But the pieces are connected, and the gaps between them are exactly where bugs hide.
+That's the real problem. Most of us learn JavaScript from one blog, React from a course, and browser rendering from a YouTube video. Each makes sense alone. But when you need to answer "why did setState not update immediately?" — you freeze. You know the words. You don't have a model.
 
-That's the real problem with how most of us learn frontend. We pick up JavaScript from one blog post, React from a course, and browser rendering from a YouTube video. Each one makes sense in isolation. But when you need to answer "why did setState not update immediately?" or "how does React decide what to re-render?" — you freeze. You know the words. You don't have a model.
-
-Think of it like a filing cabinet. If each drawer is organized but nobody knows which drawer holds what, you waste 20 minutes looking for a single file. That's your knowledge without a roadmap.
-
-This roadmap exists to fill those gaps — in dependency order, so each layer builds on the one before it.
-
-## Why This Roadmap Exists
-
-Most interview resources are written by content marketers or course creators. They list APIs. They summarize features. They do not show you how the JavaScript engine, React, and the browser collaborate on a single button click.
-
-Imagine you're at a workshop with two tables. Table A has someone giving a polished presentation with slides. Table B has someone who built the thing, broke it, fixed it, and is now explaining *why* it broke. Which table are you going to sit at?
-
-This handbook is Table B. It's written by an engineer who has been through the interview process, mentored other engineers through it, and noticed the same gaps appearing every time. The structure mirrors how the platform actually works: bottom up.
-
-You start at the JavaScript runtime because React runs on JavaScript. You learn React internals because the browser runs React. You learn browser rendering because the user perceives performance through paint. Each layer answers a question the previous layer raises.
-
-If you have ever asked "why does this work?" and got an unsatisfying answer, this handbook is for you.
-
-## How It Helps You
-
-Three concrete ways this roadmap changes how you prepare:
-
-**1. It prevents wasted time.**
-You will not study React fiber before understanding closures. You will not memorize caching headers before understanding the event loop. Every chapter assumes only what came before it. You read in order and nothing surprises you. Think of it like building a house — you don't start with the roof.
-
-**2. It gives you a mental simulation engine.**
-After Part 1, you can simulate what the JavaScript engine does when your code runs. After Part 2, you can simulate what React does when you call setState. After Part 3, you can simulate what the browser does when the DOM changes. By Part 10, you can trace a click through all of them. This is the megaphone-vs-email analogy: a megaphone broadcasts, but an email lets you trace exactly who received what, when, and what they did with it. You want to *trace* the click, not just shout about it.
-
-**3. It prepares you for depth questions.**
-Interviewers at SDE-2 level do not ask "what is a closure." They ask "what happens when this closure captures a variable from a loop and you call it after the loop finishes?" The roadmap builds the precise understanding needed for those questions.
+This roadmap fills those gaps in dependency order, so each layer builds on the one before it.
 
 ## The Dependency Graph
 
@@ -52,168 +23,53 @@ Layer 2:  React Internals             (ch 03-06)
 Layer 3:  Browser Internals           (ch 07)
     ↓
 Layer 4:  Performance                 (ch 08)
-    ↓
-Layer 5:  TypeScript                  (ch 09)
-    ↓
-Layer 6:  Architecture                (ch 10-11)
-    ↓
-Layer 7:  Interview Preparation       (ch 12)
-    ↓
-Layer 8:  Networking & Security       (ch 13-14)
-    ↓
-Layer 9:  Web Platform & CSS          (ch 15-18)
-    ↓
-Layer 10: Rendering, Build & State    (ch 19-21)
 ```
 
-You cannot skip layers. Part 2 assumes Part 1. Part 3 assumes Part 2. If you try Part 6 without Part 2, you will read about TanStack Query caching without understanding why React re-renders. You will get the words but not the understanding. It's like trying to learn multiplication before addition — you'll memorize the answer, but you won't know how to solve a new problem.
+You cannot skip layers. Part 2 assumes Part 1. Part 3 assumes Part 2. If you try Part 6 without Part 2, you'll read about TanStack Query caching without understanding why React re-renders. You'll get the words but not the understanding.
 
-The later chapters (22-33) are standalone topics that assume all 10 layers. Error handling, accessibility, patterns, debugging, animation, CI/CD, coding problems, machine coding, API design, Tailwind, AI workflows, and product thinking. These are where you apply everything you built.
+Each layer answers a question the previous layer raises:
+- JavaScript runtime explains *why* closures and the event loop exist
+- React internals explains *how* setState becomes a DOM update
+- Browser rendering explains *what* the browser does with those DOM changes
+- Performance explains *how* to measure and fix bottlenecks
 
-## How to Use This Handbook
+## How to Use This
 
 Three rules:
 
-**Read in order.** Open chapter 01. Read it. Do the simulations in your head. When you finish, open chapter 02. Do not jump. This isn't a buffet where you pick what looks tasty — it's a curriculum. Trust the order.
+**Read in order.** Open chapter 01. Read it. When you finish, open chapter 02. This isn't a buffet — it's a curriculum. Trust the order.
 
-**Trace every concept through the stack.** When you learn about fiber lanes in chapter 04, connect it back to the event loop from chapter 02. Ask: "how does the scheduler use microtasks to yield to the browser?" If you cannot answer, re-read the relevant part of chapter 02. This active connection is what builds the mental model. Passive reading doesn't work. You have to *stitch* the layers together in your head.
+**Trace through the stack.** When you learn about fiber lanes in chapter 04, connect it back to the event loop from chapter 02. Ask: "how does the scheduler use microtasks to yield?" If you can't answer, re-read chapter 02. Passive reading doesn't work. You have to stitch the layers together.
 
-**Explain out loud.** After each chapter, close the file and explain the concept to an imaginary interviewer. If you stumble, you did not internalize it yet. Re-read. Pretend you're explaining it to a smart friend who has never touched React. That's the level of clarity you're aiming for.
+**Explain out loud.** After each chapter, close the file and explain the concept to an imaginary interviewer. If you stumble, you didn't internalize it. Re-read.
 
-## What You Will Build
-
-By the end of this handbook, you will be able to:
-
-- Explain what happens between a user clicking a button and the screen updating. Every step. Every system involved.
-
-- Implement common JavaScript utilities from scratch (debounce, throttle, deep clone, Promise.all) and explain how each uses closures, the event loop, or value vs reference.
-
-- Design a component API with proper tradeoffs between controlled and uncontrolled, composition and configuration.
-
-- Debug a production performance issue by tracing from the user complaint through the React DevTools profiler to the browser performance panel.
-
-- Answer SDE-2 interview questions with depth, not buzzwords. When asked "what is reconciliation," you will explain the problem React solved, the O(n) heuristics, the key algorithm, and the tradeoffs. Not the definition.
-
-## Common Mistakes Engineers Make With This Material
-
-**Reading without simulating.** You can read the event loop chapter in 30 minutes. Understanding it takes longer. You must close the file and trace code through your mental model until it matches what the browser actually does. Reading a chapter without simulating is like reading a recipe without ever turning on the stove. You'll know what ingredients go in, but you won't know how it actually tastes.
-
-**Skipping what you think you know.** You already use closures every day. Chapter 01 covers them anyway. Read it. I guarantee there is something you did not know about how the engine stores them. The Dunning-Kruger effect is real — the moment you think you know something is usually when you've missed the deepest part of it.
-
-**Not connecting the layers.** After chapter 02, every time you see asynchronous code, ask yourself what the event loop is doing. After chapter 04, every time you use setState, trace the fiber scheduling. This active connection is what builds the mental model. It's the difference between knowing that a car has an engine and being able to pop the hood and diagnose why it's making that weird noise.
-
-## Quick Reference: All Chapters
+## Quick Reference
 
 | Ch | Topic | Why It Matters |
 |----|-------|----------------|
-| 00 | This roadmap | Know the path before you walk it |
-| 01 | JavaScript Runtime & Memory | Foundation of everything. Closures, stack, heap. |
+| 01 | JavaScript Runtime & Memory | Foundation. Closures, stack, heap. |
 | 02 | Event Loop & Promises | How async works. Microtasks vs macrotasks. |
 | 03 | React Rendering | setState, batching, update queue, scheduling. |
 | 04 | React Fiber | Pausable rendering, lanes, concurrent mode. |
-| 05 | Hook Internals | useState, useEffect, stale closures, custom hooks. |
+| 05 | Hook Internals | useState, useEffect, stale closures. |
 | 06 | Reconciliation | Diffing, keys, component identity. |
 | 07 | Browser Rendering | DOM, CSSOM, layout, paint, composite. |
 | 08 | Performance | Memo, virtualization, code splitting, profiling. |
-| 09 | TypeScript | Generics, utility types, inference, discriminated unions. |
-| 10 | TanStack Query | Server state, caching, optimistic updates. |
-| 11 | Architecture | State location, folder structure, design systems. |
-| 12 | Mock Interviews | Machine coding, system design frameworks. |
-| 13 | Networking & HTTP | Caching headers, HTTP/1.1 to 3, WebSockets. |
-| 14 | Web Security | XSS, CSRF, CSP, SameSite, token storage. |
-| 15 | Testing | Unit, integration, e2e. What to test and how. |
-| 16 | CSS Layout | Cascade, specificity, flexbox, grid, stacking context. |
-| 17 | Web Platform APIs | IntersectionObserver, ResizeObserver, Workers. |
-| 18 | Forms & Validation | Controlled vs uncontrolled, Zod, RHF. |
-| 19 | Rendering Strategies | CSR, SSR, SSG, ISR, RSC. |
-| 20 | Build Tooling | Vite, Webpack, ESM vs CJS, tree shaking. |
-| 21 | State Management | Context, Zustand, Jotai, Redux. When to use what. |
-| 22 | Error Handling | Error boundaries, Suspense, production incident response. |
-| 23 | Accessibility | ARIA, keyboard nav, screen readers. |
-| 24 | React Design Patterns | Composition, compound components, controlled/uncontrolled. |
-| 25 | Debugging & DevTools | Breakpoints, profiler, performance panel. |
-| 26 | Animation | CSS transitions, Framer Motion, compositor thread. |
-| 27 | Git, CI/CD & Deploy | Workflows, pipelines, preview deploys, feature flags. |
-| 28 | JavaScript Coding Problems | Debounce, throttle, deep clone, Promise.all, memoize. |
-| 29 | React Machine Coding | Dropdown, tabs, modal, infinite scroll, OTP. |
-| 30 | Component API Design | Button, Modal, Table, Select, Data Grid. |
-| 31 | Tailwind CSS | Design tokens, dark mode, cn(), shadcn/ui. |
-| 32 | AI Coding Workflows | Prompt engineering, verification, Cursor, Claude. |
-| 33 | Product Thinking | Four states, optimistic updates, offline, retry. |
 
-## The Teaching Pattern
+## What You'll Build
 
-Every chapter follows 13 sections. Once you know the pattern, you can extract knowledge from any chapter quickly:
+By the end, you can trace any user interaction through the entire stack. When an interviewer asks "what happens when a user clicks a button?", you'll describe the JS engine executing the handler, the event loop draining microtasks, React batching the setState calls, Fiber building the work-in-progress tree, hooks reading from state slots, reconciliation diffing the element tree, the browser running layout and paint, and performance tools measuring the interaction latency.
 
-```
-Problem          →  What pain does this solve?
-Why Failed       →  What did people do before and why was it bad?
-Mental Model     →  One sentence framing.
-Visualization    →  Diagram or flow.
-Engine Sim       →  Step by step trace through the runtime.
-Implementation   →  How it works internally.
-Real World       →  Production example.
-Tradeoffs        →  What you gain and lose.
-Mistakes         →  What beginners get wrong.
-Interview Answer →  Mid-level / Senior / Lead variants.
-Follow-up Qs     →  5 progressively harder questions.
-Mental Trigger   →  One phrase for instant recall.
-Revision         →  Bullet summary.
-```
+Not the definition. The trace.
 
-## Interview Answer
+## Common Mistakes
 
-"Tell me how you prepare for frontend interviews."
+**Reading without simulating.** You can read the event loop chapter in 30 minutes. Understanding it takes longer. Close the file and trace code through your mental model until it matches what the browser actually does.
 
-### Mid-level
+**Skipping what you think you know.** You use closures every day. Chapter 01 covers them anyway. The moment you think you know something is usually when you've missed the deepest part of it.
 
-"I follow a structured learning path that goes from the JavaScript runtime through React internals to browser rendering. Each section builds on the previous one. I do not move forward until I can explain the current topic clearly."
-
-### Senior
-
-"I use a dependency graph. I start with the JavaScript runtime because React depends on it. Then React internals, then browser rendering, then performance. Each layer answers a question from the previous one. When I mentor other engineers, I use the same graph to diagnose their knowledge gaps. If someone cannot explain why a component re-renders, I check whether they understand closures and the event loop first."
-
-### Engineering Lead
-
-"I built this learning roadmap because most material teaches topics in isolation. That does not work for frontend engineering because every layer of the stack depends on the one below it. The roadmap mirrors how the platform actually works. I have used it with 12 engineers on my team. The ones who follow it in order develop the ability to trace any interaction through the entire stack. That is the skill SDE-2 interviews test."
-
-## Follow-up Questions
-
-**Q1: If you had to remove 3 chapters from this roadmap, which would you remove and why?**
-
-Ch 09 (TypeScript) is a standalone skill that does not depend on or inform the runtime/React/browser layers. You can be a strong frontend engineer without deep TypeScript generics knowledge — the language is a tool, not a platform capability. Ch 27 (Git/CI/CD) is operational knowledge learned on the job through team conventions, not through mental modeling of the platform. Ch 31 (Tailwind CSS) is a utility-class framework choice that does not teach you how CSS or the browser works. Removing these three frees significant study time for the core platform layers (Ch 01-08) where interview depth questions actually live. The removed chapters are still valuable, but they are not prerequisites for understanding how a click becomes pixels.
-
-**Q2: Where would you place a chapter on Web Workers?**
-
-Between Part 3 (Browser Internals, Ch 07) and Part 4 (Performance, Ch 08). Workers are a browser API (Ch 17 covers them in detail), but their performance value depends on understanding the browser's thread model. You need to know that the main thread handles JS, layout, paint, and composite (Ch 07) before you can reason about why offloading work to a separate thread prevents jank. Placing it here also sets up Ch 08's "do it elsewhere" performance strategy, where Workers are the primary mechanism for moving heavy computation off the main thread.
-
-**Q3: Does the learning order change for a backend engineer switching to frontend?**
-
-Yes, in three ways. First, they need more time on Part 1 (JavaScript Runtime, Ch 01-02) because backend engineers often use Node.js patterns — `process.nextTick`, `Buffer`, streams — that differ from browser-side closures, the DOM event loop, and garbage collection pressure. The mental model of stack vs heap is the same, but the practical implications differ. Second, they can likely skip or speed through Part 5 (TypeScript, Ch 09) if they already know typed languages like Java, Go, or Rust — the generics and type inference concepts transfer directly. Third, they should spend extra time on Part 3 (Browser Rendering, Ch 07) because the browser environment — single-threaded, frame-budget-constrained, GPU-composited — is fundamentally different from server-side request/response cycles. The rendering pipeline (layout → paint → composite) has no server-side equivalent.
-
-**Q4: How would you measure whether someone actually learned from this roadmap?**
-
-Ask them to trace a complete user interaction through all 10 layers without notes. For example: "A user types in a search box and results update." They should describe: (1) the JS engine executing the event handler on the call stack (Ch 01), (2) the event loop draining microtasks after the handler returns (Ch 02), (3) React batching the setState calls and scheduling a microtask flush (Ch 03), (4) Fiber building the work-in-progress tree and yielding to the browser (Ch 04), (5) hooks reading from the Fiber's state slots (Ch 05), (6) reconciliation diffing the old and new element trees by key and type (Ch 06), (7) the browser running layout, paint, and composite for the DOM changes (Ch 07), (8) performance tools measuring the interaction latency (Ch 08). If they give isolated, disconnected answers for each topic, they memorized facts but did not build the mental model. The test is connection, not recall.
-
-**Q5: What specific gaps appear if someone skips Part 1 and goes straight to React?**
-
-Four concrete gaps emerge. First, they cannot explain closures, so they create stale closures in useEffect dependencies — the callback captures an old render's state variable and never sees updates. Second, they do not understand the event loop, so they cannot explain why setState does not update synchronously or why setTimeout(fn, 0) does not run immediately (Ch 02). They memorize "setState is async" as a rule instead of deriving it from microtask scheduling. Third, they do not understand value vs reference, so they mutate state directly (`state.count = 2`) and wonder why React does not re-render — React cannot detect the mutation because no reference changed (Ch 01). Fourth, they cannot reason about why `useMemo` and `useCallback` exist — these are tools for stabilizing heap references across renders, a concept that requires understanding closures and reference identity. Without Part 1, they memorize React rules instead of deriving them from how JavaScript works, which means they cannot answer depth questions in interviews or debug novel bugs in production.
+**Not connecting the layers.** After chapter 02, every time you see asynchronous code, ask yourself what the event loop is doing. After chapter 04, every time you use setState, trace the fiber scheduling. This active connection is what builds the mental model.
 
 ## Mental Trigger
 
 "Foundations first."
-
-## One Page Revision
-
-- Read in order. Each part depends on the previous one. Trust the sequence.
-- JavaScript (ch 01-02) is the foundation. React (ch 03-06) runs on JavaScript. Browser (ch 07) runs React. Performance (ch 08) measures the browser.
-- TypeScript (ch 09) and Architecture (ch 10-11) are standalone but practical for interviews.
-- Interview Prep (ch 12) is where you practice explaining everything.
-- Networking (ch 13-14) and Web Platform (ch 15-18) fill knowledge gaps interviewers probe.
-- Rendering (ch 19-21) connects SSR, build tools, and state management.
-- Advanced topics (ch 22-27) cover production engineering skills.
-- Coding (ch 28-33) covers whiteboard problems, machine coding, and product thinking.
-- Every chapter has 13 sections. Learn the pattern and you can extract knowledge from any chapter quickly.
-- Trace concepts through the stack. Do not learn in isolation. Stitch the layers together.
-- Explain out loud after each chapter. If you stumble, re-read.
-- Trigger phrase: "Foundations first."
