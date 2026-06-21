@@ -10,48 +10,17 @@ description: "useReducer, Zustand, Jotai, Redux, Context"
 
 ---
 
-## The one mental model
+## Problem
 
-> **There is no single "state." There are KINDS of state. Each kind has different access patterns.
-> The right tool matches the kind. Two axes decide everything: WHO needs it (from one
-> component to the whole app) and HOW OFTEN it changes or how selectively it is read. Every tool,
-> including useState, useReducer, Context, Zustand, Jotai, Redux, and TanStack Query, sits on those two
-> axes. Picking wrong is the root of both prop-drilling pain and global re-render pain.**
+"How do you manage state in React?" is a trap if you answer with a library name. The real problem is that most teams pick a single tool (usually Redux or Context) for everything. Then they hit pain. Components re-render too much. State is in the wrong place. Server data gets stuffed into a client store. Prop drilling spirals. The fix is not a better library. The fix is a taxonomy.
 
-From the two axes you understand when to lift state, when Context causes problems, why external stores use
-selectors, and why server state is its own universe (Ch 10). No memorizing libraries. You place
-the state on the grid and read off the right tool.
+Most state is local. Some state is server state. A little is genuinely global client state. Only that kind needs a store.
 
----
+## Why Existing Solution Failed
 
-## Learning Objectives
+Before React had hooks, state lived in classes. You used `setState` on class components. Then Redux became the default for "serious" apps. It was overkill for most state. Every state change dispatched an action, went through a reducer, and updated a single store. Even toggle state went through this pipeline.
 
-1. Classify state by scope × change-frequency and pick the tool from that.
-2. Explain `useReducer` vs `useState` (when state transitions get complex).
-3. Explain the **Context re-render problem** and how external stores (Zustand) solve it.
-4. Compare Zustand / Jotai / Redux models and when each fits.
-
----
-
-## Key Mental Models
-
-- **Two axes: scope (local→global) × volatility/selectivity (rare→frequent, broad→selective).**
-- **`useReducer`** centralizes complex transitions into one pure function (an interview favorite
-  for "manage a multi-field form/wizard state").
-- **Context delivers a value but has no selective subscription** → all consumers re-render.
-- **External stores subscribe via selectors** → only components reading a changed slice re-render.
-
----
-
-## Introduction
-
-"How do you manage state in React?" is a trap if you answer with a library name. The senior answer
-is the taxonomy. Most state is local. Some state is server state (Query). A little is genuinely global
-client state. Only *that* kind needs a store. We make this taxonomy automatic.
-
----
-
-## Problem: Context looks like a store but is not
+Then Context arrived. It looked like a store. You put everything in one provider. But Context has a critical limitation. It cannot selectively subscribe.
 
 ```jsx
 const AppCtx = createContext();
@@ -59,15 +28,37 @@ function Provider({ children }) {
   const [user, setUser] = useState();
   const [theme, setTheme] = useState("light");
   const [cartCount, setCartCount] = useState(0);   // changes often
-  return <AppCtx.Provider value={{ user, theme, cartCount, setTheme, setCartCount }}>
-    {children}</AppCtx.Provider>;
+  return (
+    <AppCtx.Provider value={{ user, theme, cartCount, setTheme, setCartCount }}>
+      {children}
+    </AppCtx.Provider>
+  );
 }
 ```
 
-Every time `cartCount` changes, the `value` object is new. **Every component consuming `AppCtx`
-re-renders**, even ones that only read `theme`. Context has no way to say "I only care about
-`theme`." That is the core limitation. Context is a *dependency injection and broadcast* mechanism.
-It is not a fine-grained store.
+Every time `cartCount` changes, the `value` object is new. Every component consuming `AppCtx` re-renders, even ones that only read `theme`. Context has no way to say "I only care about `theme`." That is the core limitation. Context is a dependency injection and broadcast mechanism. It is not a fine-grained store.
+
+## Mental Model
+
+There is no single "state." There are KINDS of state. Each kind has different access patterns. The right tool matches the kind. Two axes decide everything: WHO needs it (from one component to the whole app) and HOW OFTEN it changes or how selectively it is read.
+
+Every tool, including useState, useReducer, Context, Zustand, Jotai, Redux, and TanStack Query, sits on those two axes. Picking wrong is the root of both prop-drilling pain and global re-render pain.
+
+From the two axes you understand when to lift state, when Context causes problems, why external stores use selectors, and why server state is its own universe. No memorizing libraries. You place the state on the grid and read off the right tool.
+
+| Tool | Model | Reach for it when |
+|---|---|---|
+| `useState` | local cell | one component's state |
+| `useReducer` | local plus pure transitions | complex multi-field transitions, wizards |
+| **Context** | broadcast and DI, no selectors | rarely-changing global values (theme, auth, locale) |
+| **Zustand** | external store plus selectors | frequent or selective global client state, minimal API |
+| **Jotai** | bottom-up atoms | derived and composable atomic state, fine-grained |
+| **Redux Toolkit** | single store plus reducers plus middleware | big teams, complex flows, devtools and time-travel |
+| **TanStack Query** | server cache | anything from a server. This is not client state |
+
+Modern default for a new app: Query (server) plus local state plus a little Zustand (global client). Redux is still common in large and legacy codebases. It works well when its middleware ecosystem is useful.
+
+## Visualization
 
 ```mermaid
 flowchart TD
@@ -78,37 +69,9 @@ flowchart TD
   end
 ```
 
-Two ways to fix this within Context: **split contexts** into separate `ThemeContext` and `CartContext` so
-changes are scoped. Or memoize the value. But for state that changes often and is read widely, an
-external store with selectors is the clean answer.
+Context broadcasts changes to all consumers. External stores with selectors only update components that read the changed slice. This is the key difference.
 
----
-
-## useReducer: centralizing transitions
-
-When state has many fields that change together with rules, scattered `useState` setters become
-buggy. `useReducer` moves all transitions into one pure function:
-
-```js
-function reducer(state, action) {
-  switch (action.type) {
-    case "field":   return { ...state, [action.name]: action.value };
-    case "submit":  return { ...state, status: "submitting", error: null };
-    case "error":   return { ...state, status: "idle", error: action.error };
-    default:        return state;
-  }
-}
-const [state, dispatch] = useReducer(reducer, initial);
-```
-
-Why it helps: transitions are **testable in isolation** as a pure function. The next state is
-predictable. It pairs well with discriminated-union state (Ch 09). Reach for `useReducer` when "set
-this also implies set that" rules appear. Use it for wizards and forms. Redux is `useReducer` scaled to
-app level with middleware and devtools.
-
----
-
-## Engine Simulation: Zustand's selector subscription
+## Engine Simulation
 
 ```js
 const useStore = create((set) => ({
@@ -127,95 +90,123 @@ function Profile() {
 }
 ```
 
-The store lives **outside React**. Each component's selector runs on every store change. If its
-*output* has not changed (`Object.is`), React skips that component. So `inc()` re-renders `Counter`
-but not `Profile`. No provider. No context-broadcast re-render. That selector subscription is the
-whole reason external stores scale where Context cannot.
+The store lives outside React. Each component's selector runs on every store change. If its output has not changed (using `Object.is` comparison), React skips that component. So `inc()` re-renders `Counter` but not `Profile`. No provider. No context-broadcast re-render.
 
----
+Here is how it works internally. When `inc()` is called, Zustand calls the update function. This creates a new state object. Zustand then runs every subscriber's selector. It compares the old selector output with the new one. If they are the same (by `Object.is`), the subscriber is skipped. If different, the subscriber tells React to re-render.
 
-## The landscape (derived)
+The selector output comparison is what makes external stores scale where Context cannot. Context has no selectors. It always sends a new object reference. All consumers re-render.
 
-| Tool | Model | Reach for it when |
-|---|---|---|
-| `useState` | local cell | one component's state |
-| `useReducer` | local plus pure transitions | complex multi-field transitions, wizards |
-| **Context** | broadcast and DI, no selectors | rarely-changing global values (theme, auth, locale) |
-| **Zustand** | external store plus selectors | frequent or selective global client state, minimal API |
-| **Jotai** | bottom-up atoms | derived and composable atomic state, fine-grained |
-| **Redux Toolkit** | single store plus reducers plus middleware | big teams, complex flows, devtools and time-travel |
-| **TanStack Query** | server cache (Ch 10) | anything from a server. This is not client state |
+## Internal Implementation
 
-Modern default for a new app: **Query (server) plus local state plus a little Zustand (global client)**.
-Redux is still common in large and legacy codebases. It works well when its middleware ecosystem is useful.
+useReducer centralizes complex state transitions into one pure function. This is the pattern that scales conceptually to Redux.
 
----
+```js
+function reducer(state, action) {
+  switch (action.type) {
+    case "field":   return { ...state, [action.name]: action.value };
+    case "submit":  return { ...state, status: "submitting", error: null };
+    case "error":   return { ...state, status: "idle", error: action.error };
+    default:        return state;
+  }
+}
+const [state, dispatch] = useReducer(reducer, initial);
+```
 
-## Interview Discussion (reason first)
+The reducer is a pure function. Given state and action, it returns the next state. No side effects. No mutations. This makes it testable in isolation. You can unit test a reducer without rendering any React component.
 
-**Q1. "Isn't Context a state manager? Why use Zustand or Redux?"**
-> "Context is dependency injection plus broadcast. It is not a fine-grained store. A value change
-> re-renders *all* consumers no matter what they read. It works great for rarely-changing global
-> values like theme and auth. For state that changes often and is read widely, use selector subscriptions
-> with Zustand, Jotai, or Redux. Only components reading the changed slice re-render."
+Redux scales this pattern. A Redux reducer handles actions from anywhere in the app. Middleware intercepts actions for logging, async, or side effects. The devtools log every action and enable time-travel debugging.
 
-**Q2. "useState vs useReducer?"**
-> "Use useState for independent simple values. Use useReducer when transitions are complex or
-> interdependent. It centralizes them in a pure, testable function and makes the next state
-> predictable. It also scales conceptually to Redux."
+Zustand's internal implementation is simpler. It uses a publish-subscribe pattern. Each selector is a subscriber. Zustand stores subscribers in a Set. When state changes, it iterates the Set and calls each subscriber's listener. The listener compares old and new selector output. If different, it triggers a React re-render via `useSyncExternalStore`.
 
-**Q3. "How does Zustand avoid Context's re-render problem?"**
-> "The store lives outside React. Components subscribe with a selector and only re-render when their
-> selector's *output* changes (using Object.is). There is no provider value object, so no broadcast re-render."
+## Real World Example
 
-*Scoring:* full = scope times volatility taxonomy + context-broadcast + selector subscription + server
-state is separate. Fail = "always use Redux" or "Context is global state, done."
+You have a dashboard app. The current code uses one Context provider for everything: user, theme, notifications, and a real-time counter. The counter updates every few seconds. Every update re-renders the entire app.
 
----
+You split the provider into `ThemeContext`, `UserContext`, and move the counter to Zustand. The counter store:
+
+```js
+const useCounterStore = create((set) => ({
+  value: 0,
+  increment: () => set((s) => ({ value: s.value + 1 })),
+}));
+```
+
+Only components that call `useCounterStore((s) => s.value)` re-render. The theme picker and user avatar stop re-rendering on every counter tick. The app feels faster. The profiler confirms fewer renders.
+
+Later, you add server-side data. You use TanStack Query instead of putting it in Zustand. Query handles caching, refetching, and loading states. Zustand only holds the small amount of truly client-side global state.
+
+## Tradeoffs
+
+**Context for global state:** Simple setup, no extra deps. But re-renders all consumers. Good for rarely-changing values like theme. Bad for hot state.
+
+**Zustand:** Minimal API. External store with selectors. Good for frequent global state. Small bundle. But it is another dependency. Components subscribe manually.
+
+**Redux Toolkit:** Predictable state updates. Excellent devtools. Middleware ecosystem. Mature patterns. But boilerplate-heavy for simple cases. Overkill for most apps.
+
+**Jotai:** Fine-grained atoms. Good for derived state. Composable. But the mental model is different from the store pattern. Can be confusing for teams.
+
+**Server state in client stores:** You re-implement caching, deduplication, and refetching badly. Use TanStack Query instead.
 
 ## Common Mistakes
 
-- **One giant Context** for everything that changes often. This causes app-wide re-renders.
-- **Server data in a client store.** This means re-implementing Query badly. See Ch 10.
-- **Redux for trivial state.** Boilerplate with no payoff.
-- **Selectors returning new objects each call** like `s => ({a: s.a})`. This always looks "changed" and defeats
-  the optimization. Return primitives or use shallow-equality.
-- **Lifting state too high** "just in case." This causes re-renders and coupling (Ch 11).
+- One giant Context for everything that changes often. This causes app-wide re-renders.
+- Server data in a client store. This means re-implementing Query badly.
+- Redux for trivial state. Boilerplate with no payoff.
+- Selectors returning new objects each call like `s => ({a: s.a})`. This always looks "changed" and defeats optimization. Return primitives or use shallow-equality.
+- Lifting state too high "just in case." This causes re-renders and coupling.
 
----
+## SDE-2 Interview Answer
 
-## Interview Questions
+**Question: "How do you decide what state management tool to use?"**
 
-1. Place these on the scope×volatility grid and pick a tool: theme, contacts list, a modal's
-   open flag, cart count read across the app, a multi-step form.
-2. Write the Context re-render problem and two ways to mitigate it within Context.
-3. Convert a tangle of `useState` setters into a `useReducer`; why is it more testable?
-4. Explain Zustand's selector subscription and a selector that accidentally defeats it.
-5. When is Redux Toolkit still the right call over Query+Zustand?
+### Mid-level
 
----
+"I classify state by who needs it and how often it changes. Local state stays in useState. Server state goes to TanStack Query. Global client state that changes a lot uses Zustand for selector subscriptions. Context works for rarely-changing things like theme. useReducer helps when state transitions are complex, like a multi-step form."
 
-## Homework
+### Senior
 
-1. Build a provider with `theme` + a fast-changing counter; log renders in a theme-only consumer
-   and watch it re-render on counter change. Fix by splitting contexts, then by moving the counter
-   to Zustand; compare.
-2. Refactor a 4-field form from `useState`×4 to `useReducer`; unit-test the reducer with no React.
-3. In `NOTES.md`: the scope×volatility grid with one tool per cell.
+"State management is not about picking a library. It is about classifying state along two axes: scope (local to global) and volatility (how often and how selectively it is read). Each tool fits a region on this grid.
 
----
+Context is dependency injection with broadcast. It works for rare global values. External stores like Zustand use selector subscriptions. Only components reading a changed slice re-render. That is the fundamental scaling difference.
 
-## Summary
+useReducer centralizes complex transitions. It pairs well with discriminated union state. Redux is useReducer at app scale with middleware and devtools.
 
-- **State has kinds.** Pick by **scope times volatility and selectivity**. Most state is local. Server
-  state is a cache (Query, Ch 10). Only genuinely global client state needs a store.
-- **`useReducer`** centralizes complex transitions into a pure, testable function.
-- **Context broadcasts.** A value change re-renders all consumers. Good for rare global values.
-  Bad for hot state. Split contexts or memoize to work around this.
-- **External stores (Zustand, Jotai, Redux) subscribe via selectors.** Only readers of a changed slice
-  re-render. That is why they scale where Context cannot.
-- Modern default: **Query plus local plus a little Zustand**. Redux for large, complex, or legacy needs.
+Server state is not client state. TanStack Query handles caching, re-fetching, and background sync. Putting server data in a client store means re-inventing Query badly.
 
-## Go deeper
-Ch 10 (server state), Ch 11 (state-location decision tree), Ch 24 (composition as a state-sharing
-alternative). Zustand's docs are short and worth a full read once this model is solid.
+My default for a new app: Query for server data, local state for component state, a small Zustand store for genuine global client state. Redux only when the middleware ecosystem is needed at scale."
+
+### Engineering Lead
+
+"I set guidelines so the team does not have to debate this on every feature. We document the decision tree: is this server state, local UI state, or global client state? Server state goes to Query. Local state goes to useState or useReducer. Global client state uses Zustand.
+
+We ban putting everything in one Context. We ban Redux for trivial features. We ban server data in client stores.
+
+I also make sure the team understands the re-render cost. We use the React profiler in CI to catch regressions. When a developer reaches for a new state tool, they need to explain which cell of the grid it fills and why existing tools do not work."
+
+## Follow-up Questions
+
+1. Place these on the scope x volatility grid and pick a tool: theme, contacts list, a modal's open flag, cart count read across the app, a multi-step form. (application)
+
+2. The team has one giant Context for all app state. It re-renders everything on every change. Walk through two ways to fix this within Context and one way outside it. (analysis)
+
+3. Write a `useReducer` for a 4-field form with submit, error, and field-update actions. Why is this more testable than four `useState` calls? (application plus analysis)
+
+4. A component reads `useStore((s) => ({ a: s.a, b: s.b }))` and re-renders too often. Explain why and fix the selector. (debugging)
+
+5. Design the state architecture for a real-time collaborative document editor. Multiple users edit simultaneously. Offline support needed. Walk through your tool choices and why. (synthesis)
+
+## Mental Trigger
+
+**Two axes: scope x volatility. Pick the tool from the cell.**
+
+## One Page Revision
+
+- State has kinds. Pick by scope x volatility and selectivity.
+- Most state is local. Server state is a cache (Query). Only genuinely global client state needs a store.
+- Context broadcasts. A value change re-renders all consumers. Good for rare global values. Bad for hot state.
+- Split contexts or memoize to mitigate within Context.
+- External stores (Zustand, Jotai, Redux) subscribe via selectors. Only readers of a changed slice re-render.
+- useReducer centralizes complex transitions into a pure, testable function.
+- Redux is useReducer at app scale with middleware and devtools.
+- Modern default: Query + local + a little Zustand. Redux for large, complex, or legacy needs.
+- Selectors returning new objects defeat optimization. Return primitives or use shallow equality.

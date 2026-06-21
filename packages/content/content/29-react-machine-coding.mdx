@@ -5,105 +5,92 @@ part: "Coding & Practice"
 description: "Searchable dropdown, tabs, modal, infinite scroll, OTP"
 ---
 
+## Problem
 
-> Prerequisites: React rendering and reconciliation (how React diffs the virtual DOM and commits updates), hooks (useState, useEffect, useRef, useCallback. These are the primitives for stateful function components), key prop (how React identifies elements across renders, critical for lists and form inputs), and component patterns (controlled vs uncontrolled, lifting state up, render props).
-> The shared-editor / CoderPad round. Build a working component from scratch.
+You are in a coding interview. The prompt: "Build a searchable dropdown that fetches results from an API. Handle keyboard navigation, loading state, and error state. You have 20 minutes."
 
----
+You need to go from prompt to working component while narrating your reasoning. The interviewer watches your process. They check if you understand state management, edge cases, accessibility, and performance.
 
-## The one mental model
+The real problem is not building the component. It is knowing which state you need, how to handle the full interaction lifecycle, and how to talk through tradeoffs while coding.
 
-> **Machine coding tests your component instinct: can you go from prompt → minimal state →**
-> **working UI → edge cases → accessibility in 15 to 20 minutes, narrating your reasoning?**
-> **The interviewer is NOT checking if you remember the exact API. They're checking:**
-> **"Can this person BUILD something that works, handle the full interaction lifecycle,**
-> **and talk about tradeoffs while coding?"**
+## Why Existing Solution Failed
 
-From "minimal state → working UI → edges" you learn: use `useState` before over-engineering,
-discriminated unions for status, controlled vs uncontrolled choice, keyboard + screen reader
-support, and the four states (loading, empty, error, data).
+Copying component libraries hides the internals. You import a Dropdown from Material UI or a Modal from Ant Design. They work. But in an interview you cannot import anything. You must build from scratch using only React hooks.
 
----
+Relying on muscle memory fails. You might know how to write a dropdown but forget keyboard navigation. You might build the happy path but miss the loading state. You might handle click but forget Escape key. The interviewer probes these gaps.
 
-## Learning Objectives
+The fix is a repeatable process: clarify the prompt, define minimal state, build the happy path, add edge cases, add accessibility, then talk about performance.
 
-1. Build searchable dropdown / autocomplete with keyboard nav + debounce + cancel
-2. Build tabs, accordion, modal with controlled + uncontrolled variants
-3. Build infinite scroll with Intersection Observer
-4. Build virtual list with fixed-height items
-5. Build OTP input with auto-focus and paste
-6. Build drag-and-drop without a library
+## Mental Model
 
----
+Machine coding is a process, not a memorization exercise. Follow these steps for every component:
 
-## Key Mental Models
+1. **Clarify.** Ask: synchronous or async? Controlled or uncontrolled? Single select or multi select? What states: loading, empty, error, success? What keyboard interactions? What screen reader support?
 
-- **Minimal state**: Derive everything else. If a value can be computed from existing state,
-  don't store it.
-- **Discriminated union for status**: `{ status: 'loading' | 'empty' | 'error' | 'success',
-  data?, error? }`. Covers every UI state without impossible combinations.
-- **Controlled vs uncontrolled**: Does the parent own the value? Controlled. Does the
-  component manage itself? Uncontrolled. Support both via the same pattern.
-- **Keyboard + mouse**: Every interactive component needs Enter/Escape/Arrow/Tab handling,
-  focus management, and screen reader attributes.
+2. **Define minimal state.** Store only what cannot be derived. Everything else is computed. Use a discriminated union for status: `{ status: 'loading' | 'empty' | 'error' | 'success', data?, error? }`. This covers every UI state without impossible combinations.
 
----
+3. **Build happy path.** Get the component working for the ideal case. Input filters list. User clicks or presses Enter. Value updates.
 
-## 1. Searchable Dropdown / Autocomplete
+4. **Add edge cases.** Empty input, no results, API failure, rapid typing, paste, backspace on empty field.
+
+5. **Add accessibility.** ARIA roles, keyboard navigation, focus management, screen reader attributes.
+
+6. **Talk about performance.** Memoization, virtualization, debouncing, aborting stale requests.
+
+## Visualization
 
 ```mermaid
 flowchart TB
   subgraph User["User Interaction"]
     Focus["Focus input"] --> Type["Type query"]
-    Type --> Nav["ArrowUp/Down<br/>navigate options"]
-    Nav --> Select["Enter / Click<br/>select option"]
-    Select --> Close["Dropdown closes<br/>input shows value"]
+    Type --> Nav["ArrowUp/Down navigate options"]
+    Nav --> Select["Enter / Click select option"]
+    Select --> Close["Dropdown closes, input shows value"]
   end
-
   subgraph System["System Behavior"]
     Type --> Debounce["Debounce 300ms"]
     Debounce --> Async["Async search"]
-    Async --> Cancel["AbortController<br/>cancels stale request"]
+    Async --> Cancel["AbortController cancels stale request"]
     Cancel --> Resolve{"Response?"}
     Resolve -->|"success"| Show["Show results"]
     Resolve -->|"empty"| Empty["Show 'No results'"]
     Resolve -->|"error"| Error["Show error + retry"]
   end
-
   subgraph A11y["Accessibility"]
-    Nav --> Aria["aria-activedescendant<br/>updates per option"]
+    Nav --> Aria["aria-activedescendant updates per option"]
     Close --> Focus["Return focus to input"]
     Key["Escape"] --> Close
     Outside["Click outside"] --> Close
   end
-
   Show --> Nav
 ```
 
-This is the most common machine-coding question at SDE-2 level.
-
-### Requirements
-
-- Text input filters a list
-- Keyboard: ArrowUp and ArrowDown to navigate, Enter to select, Escape to close
-- Click outside closes the dropdown
-- Debounced async search with cancel
-- Loading, empty, and error states
-- `aria-combobox` pattern for screen readers
-
-### Minimal state
-
-```javascript
-{
-  isOpen: false,
-  inputValue: '',
-  highlightedIndex: -1,
-  items: [],          // filtered items
-  status: 'idle',     // 'idle' | 'loading' | 'success' | 'empty' | 'error'
-}
+```mermaid
+flowchart TB
+  subgraph Container["Scroll Container (height: 400px, overflow: auto)"]
+    Spacer["Spacer div height = N items * itemHeight creates correct scrollbar size"]
+    subgraph Viewport["Viewport (visible area)"]
+      direction LR
+      R1["Row 0 top: 0"]
+      R2["Row 1 top: 40px"]
+      R3["Row 2 top: 80px"]
+      Dot["..."]
+      R14["Row 14 top: 560px"]
+    end
+    Above["Rows above (not rendered)"]
+    Below["Rows below (not rendered)"]
+  end
+  Above -->|"scrollTop"| Viewport
+  Viewport -->|"containerHeight"| Below
+  Spacer --> Above
+  Spacer --> Below
 ```
 
-### Implementation skeleton
+## Engine Simulation
+
+Walk through four essential components step by step.
+
+**1. Searchable Dropdown.**
 
 ```jsx
 function SearchableSelect({ options, onChange, async, onSearch }) {
@@ -115,12 +102,10 @@ function SearchableSelect({ options, onChange, async, onSearch }) {
   const inputRef = useRef(null);
   const listRef = useRef(null);
 
-  // Debounced async search with cancel
   useEffect(() => {
     if (!async || !inputValue) return;
     const controller = new AbortController();
     setStatus('loading');
-
     onSearch(inputValue, controller.signal)
       .then(data => {
         setItems(data);
@@ -129,11 +114,9 @@ function SearchableSelect({ options, onChange, async, onSearch }) {
       .catch(err => {
         if (err.name !== 'AbortError') setStatus('error');
       });
-
     return () => controller.abort();
   }, [inputValue, async]);
 
-  // Filter local options
   useEffect(() => {
     if (async) return;
     const filtered = options.filter(o =>
@@ -143,7 +126,6 @@ function SearchableSelect({ options, onChange, async, onSearch }) {
     setStatus(filtered.length === 0 ? 'empty' : 'success');
   }, [inputValue, options]);
 
-  // Keyboard navigation
   const handleKeyDown = (e) => {
     switch (e.key) {
       case 'ArrowDown':
@@ -155,9 +137,7 @@ function SearchableSelect({ options, onChange, async, onSearch }) {
         setHighlightedIndex(i => Math.max(i - 1, 0));
         break;
       case 'Enter':
-        if (highlightedIndex >= 0) {
-          selectItem(items[highlightedIndex]);
-        }
+        if (highlightedIndex >= 0) selectItem(items[highlightedIndex]);
         break;
       case 'Escape':
         setIsOpen(false);
@@ -208,28 +188,18 @@ function SearchableSelect({ options, onChange, async, onSearch }) {
 }
 ```
 
-### Interview checklist
+Internally: the component has four pieces of state. `isOpen` controls the dropdown visibility. `inputValue` stores the typed text. `highlightedIndex` tracks which option is focused via keyboard. `items` holds the filtered or fetched results. `status` drives the loading, empty, error, and success UI.
 
-- [ ] Debounce async input (use a custom `useDebounce` hook)
-- [ ] Abort stale requests (AbortController in useEffect cleanup)
-- [ ] Keyboard nav (ArrowUp/Down, Enter, Escape)
-- [ ] Click-outside close (useRef + mousedown listener)
-- [ ] aria attributes (`combobox`, `listbox`, `option`, `aria-activedescendant`)
-- [ ] Loading / empty / error states
-- [ ] Controlled + uncontrolled variants
-- [ ] Virtualize if options > 100 (section 4)
+The async useEffect creates an AbortController on each render. It passes the signal to the fetch call. When the input changes again, the cleanup function calls `controller.abort()`. This cancels the in-flight request. The `.catch` ignores `AbortError` so the UI does not flicker on cancellation.
 
----
+The keyboard handler uses a switch on `e.key`. ArrowDown and ArrowUp clamp the index between 0 and items.length minus 1. Enter selects the highlighted item. Escape closes the dropdown.
 
-## 2. Tabs
+The ARIA attributes make the component accessible. `role="combobox"` on the wrapper tells screen readers this is a combobox interaction. `aria-activedescendant` on the input points to the current highlighted option. `role="listbox"` and `role="option"` define the list.
 
-### Mental model
-
-Tabs = TabList + Tab + TabPanel. Only one tab is "active" at a time.
+**2. Tabs and Accordion.**
 
 ```jsx
 function Tabs({ tabs, activeTab, onChange, defaultTab }) {
-  // Controlled or uncontrolled
   const [internalActive, setInternalActive] = useState(defaultTab ?? 0);
   const current = activeTab !== undefined ? activeTab : internalActive;
 
@@ -256,12 +226,7 @@ function Tabs({ tabs, activeTab, onChange, defaultTab }) {
         </button>
       ))}
       {tabs.map((tab, i) => (
-        <div
-          key={i}
-          role="tabpanel"
-          id={`panel-${i}`}
-          hidden={current !== i}
-        >
+        <div key={i} role="tabpanel" id={`panel-${i}`} hidden={current !== i}>
           {tab.content}
         </div>
       ))}
@@ -270,16 +235,7 @@ function Tabs({ tabs, activeTab, onChange, defaultTab }) {
 }
 ```
 
-### Interview notes
-
-- Use `role="tablist"`, `role="tab"`, `role="tabpanel"`. Screen readers need this.
-- `aria-selected` on the active tab.
-- `aria-controls` connects tab → panel.
-- Arrow keys to navigate between tabs (roving tabindex).
-
----
-
-## 3. Accordion
+Internally: the controlled/uncontrolled pattern checks if `activeTab` prop is provided. If it is `undefined`, the component manages state internally. `current` picks the right source. `select` updates internal state only if uncontrolled, then calls `onChange` in both cases. The `hidden` attribute on tabpanels hides inactive content. ARIA roles connect the tabs and panels for screen readers.
 
 ```jsx
 function Accordion({ items, allowMultiple = false }) {
@@ -289,9 +245,7 @@ function Accordion({ items, allowMultiple = false }) {
     setOpenIndexes(prev =>
       prev.includes(index)
         ? prev.filter(i => i !== index)
-        : allowMultiple
-          ? [...prev, index]
-          : [index]
+        : allowMultiple ? [...prev, index] : [index]
     );
   };
 
@@ -299,18 +253,11 @@ function Accordion({ items, allowMultiple = false }) {
     <div>
       {items.map((item, i) => (
         <div key={i}>
-          <button
-            onClick={() => toggle(i)}
-            aria-expanded={openIndexes.includes(i)}
-            aria-controls={`accordion-panel-${i}`}
-          >
+          <button onClick={() => toggle(i)} aria-expanded={openIndexes.includes(i)}
+            aria-controls={`accordion-panel-${i}`}>
             {item.title}
           </button>
-          <div
-            id={`accordion-panel-${i}`}
-            role="region"
-            hidden={!openIndexes.includes(i)}
-          >
+          <div id={`accordion-panel-${i}`} role="region" hidden={!openIndexes.includes(i)}>
             {item.content}
           </div>
         </div>
@@ -320,22 +267,11 @@ function Accordion({ items, allowMultiple = false }) {
 }
 ```
 
----
+Internally: `allowMultiple` controls whether toggling one item closes others. When `allowMultiple` is false, the toggle replaces the entire array with the new index. When true, it adds or removes the index.
 
-## 4. Infinite Scroll
+**3. Infinite Scroll.**
 
-### Mental model
-
-```
-[List container] ← IntersectionObserver watches a sentinel element
-  ├── Row 1
-  ├── Row 2
-  ├── ...
-  ├── Row N
-  └── <div ref={sentinel} /> ← when visible → load more
-```
-
-```javascript
+```jsx
 function useInfiniteScroll(loadMore, hasMore) {
   const sentinelRef = useRef(null);
 
@@ -343,7 +279,7 @@ function useInfiniteScroll(loadMore, hasMore) {
     if (!hasMore) return;
     const observer = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting) loadMore();
-    }, { rootMargin: '200px' }); // trigger 200px before visible
+    }, { rootMargin: '200px' });
 
     if (sentinelRef.current) observer.observe(sentinelRef.current);
     return () => observer.disconnect();
@@ -351,77 +287,13 @@ function useInfiniteScroll(loadMore, hasMore) {
 
   return sentinelRef;
 }
-
-function InfiniteList({ fetchItems }) {
-  const [items, setItems] = useState([]);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [loading, setLoading] = useState(false);
-
-  const loadMore = useCallback(async () => {
-    if (loading) return;
-    setLoading(true);
-    const newItems = await fetchItems(page);
-    setItems(prev => [...prev, ...newItems]);
-    setHasMore(newItems.length > 0);
-    setPage(p => p + 1);
-    setLoading(false);
-  }, [page, loading]);
-
-  const sentinelRef = useInfiniteScroll(loadMore, hasMore);
-
-  return (
-    <div>
-      {items.map((item, i) => <Row key={item.id} item={item} />)}
-      {loading && <Spinner />}
-      {hasMore && <div ref={sentinelRef} />}
-    </div>
-  );
-}
 ```
 
-### Interview notes
+Internally: `IntersectionObserver` watches the sentinel element. When it enters the viewport plus `rootMargin` (200px lookahead), the callback fires. The observer must be disconnected in cleanup to prevent memory leaks. `hasMore` being false stops the observer entirely.
 
-- `IntersectionObserver` performs better than scroll listeners. Scroll listeners fire on every pixel scroll (60+ times/sec) on the main thread. IntersectionObserver is browser-native and callback-driven. It only fires when observed elements cross the viewport boundary.
-- `rootMargin` gives us a lookahead buffer so we load before the user reaches the bottom.
-- Clean up observer in `useEffect` return to prevent memory leaks.
-- Guard against duplicate calls with a `loading` flag.
-- Handle empty results: `hasMore` becomes false.
+The loading guard prevents duplicate calls. Without it, the observer might fire multiple times before the state updates.
 
----
-
-## 5. Virtual List
-
-### Mental model: windowing
-
-```mermaid
-flowchart TB
-  subgraph Container["Scroll Container (height: 400px, overflow: auto)"]
-    Spacer["Spacer div<br/>height = N items × itemHeight<br/>creates correct scrollbar size"]
-
-    subgraph Viewport["Viewport (visible area)"]
-      direction LR
-      R1["Row 0<br/>top: 0"]
-      R2["Row 1<br/>top: 40px"]
-      R3["Row 2<br/>top: 80px"]
-      Dot["⋯"]
-      R14["Row 14<br/>top: 560px"]
-    end
-
-    Above["Rows above<br/>(not rendered)"]
-    Below["Rows below<br/>(not rendered)"]
-  end
-
-  Above -->|"scrollTop"| Viewport
-  Viewport -->|"containerHeight"| Below
-  Spacer --> Above
-  Spacer --> Below
-
-  style Above fill:#f1f5f9,stroke:#cbd5e1
-  style Below fill:#f1f5f9,stroke:#cbd5e1
-  style Viewport fill:#dbeafe,stroke:#3b82f6
-  style Container fill:#f8fafc,stroke:#e2e8f0
-```
+**4. Virtual List.**
 
 ```jsx
 function VirtualList({ items, itemHeight = 40, containerHeight = 400 }) {
@@ -429,12 +301,9 @@ function VirtualList({ items, itemHeight = 40, containerHeight = 400 }) {
   const containerRef = useRef(null);
 
   const totalHeight = items.length * itemHeight;
-  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - 2); // overscan
-  const endIndex = Math.min(
-    items.length,
-    Math.ceil((scrollTop + containerHeight) / itemHeight) + 2
-  );
-
+  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - 2);
+  const endIndex = Math.min(items.length,
+    Math.ceil((scrollTop + containerHeight) / itemHeight) + 2);
   const visibleItems = items.slice(startIndex, endIndex);
 
   const handleScroll = () => {
@@ -442,22 +311,15 @@ function VirtualList({ items, itemHeight = 40, containerHeight = 400 }) {
   };
 
   return (
-    <div
-      ref={containerRef}
-      onScroll={handleScroll}
-      style={{ height: containerHeight, overflow: 'auto' }}
-    >
+    <div ref={containerRef} onScroll={handleScroll}
+      style={{ height: containerHeight, overflow: 'auto' }}>
       <div style={{ height: totalHeight, position: 'relative' }}>
         {visibleItems.map((item, i) => (
-          <div
-            key={item.id}
-            style={{
-              position: 'absolute',
-              top: (startIndex + i) * itemHeight,
-              height: itemHeight,
-              width: '100%',
-            }}
-          >
+          <div key={item.id} style={{
+            position: 'absolute',
+            top: (startIndex + i) * itemHeight,
+            height: itemHeight, width: '100%',
+          }}>
             {item.content}
           </div>
         ))}
@@ -467,178 +329,24 @@ function VirtualList({ items, itemHeight = 40, containerHeight = 400 }) {
 }
 ```
 
-### Interview notes
+Internally: the container has a fixed height and overflow auto. The inner spacer div has height equal to total items times item height. This creates the correct scrollbar size. `scrollTop` drives which rows are visible. `startIndex` and `endIndex` calculate the visible range with 2 rows of overscan above and below. Each visible row is positioned absolutely at `(startIndex + i) * itemHeight`. The overscan prevents blank space during fast scrolling because the next rows are already rendered before they enter the viewport.
 
-- **Overscan**: Render 2-3 extra rows above/below viewport so empty space isn't visible
-  during fast scrolling.
-- **Dynamic heights**: Need to measure each row and maintain a cumulative height array.
-  Use `ResizeObserver` per row.
-- **Key**: Use item ID, not index. Indexes shift when items are filtered or sorted.
-- **Tab navigation**: Focusable elements inside virtual rows need special handling.
-  Make sure focus does not jump unexpectedly.
-- **Libraries**: `react-window` (fixed), `react-virtuoso` (dynamic), `@tanstack/react-virtual`.
-
-### Real-world
-
-"I would use `@tanstack/react-virtual` for a production virtual list. It handles
-dynamic heights, sticky headers, scroll-to-index, and RTL. But for the interview, I would
-build a fixed-height version to show I understand the windowing mechanics."
-
----
-
-## 6. OTP Input
-
-### Requirements
-
-- N input boxes, each accepting 1 digit
-- Auto-focus next box on typing
-- Auto-focus previous box on Backspace
-- Paste support (fill all boxes)
-- Keyboard navigation (ArrowLeft/ArrowRight)
-
-```jsx
-function OTPInput({ length = 6, onComplete }) {
-  const [otp, setOtp] = useState(Array(length).fill(''));
-  const inputRefs = useRef([]);
-
-  const handleChange = (index, value) => {
-    if (!/^\d*$/.test(value)) return; // digits only
-    const newOtp = [...otp];
-    // Handle paste — value may be multiple chars
-    const digits = value.split('').filter(c => /^\d$/.test(c));
-    for (let i = 0; i < digits.length && index + i < length; i++) {
-      newOtp[index + i] = digits[i];
-    }
-    setOtp(newOtp);
-
-    // Focus next empty box
-    const nextEmpty = newOtp.findIndex((v, i) => !v && i > index);
-    if (nextEmpty >= 0) inputRefs.current[nextEmpty]?.focus();
-
-    // Call onComplete when all filled
-    if (newOtp.every(v => v)) onComplete?.(newOtp.join(''));
-  };
-
-  const handleKeyDown = (index, e) => {
-    if (e.key === 'Backspace' && !otp[index] && index > 0) {
-      inputRefs.current[index - 1]?.focus();
-    }
-    if (e.key === 'ArrowLeft' && index > 0) {
-      inputRefs.current[index - 1]?.focus();
-    }
-    if (e.key === 'ArrowRight' && index < length - 1) {
-      inputRefs.current[index + 1]?.focus();
-    }
-  };
-
-  const handlePaste = (e) => {
-    e.preventDefault();
-    const text = e.clipboardData.getData('text');
-    handleChange(0, text);
-  };
-
-  return (
-    <div onPaste={handlePaste} role="group" aria-label="OTP input">
-      {otp.map((digit, i) => (
-        <input
-          key={i}
-          ref={el => inputRefs.current[i] = el}
-          type="text"
-          inputMode="numeric"
-          maxLength={length} // allow paste of full code
-          value={digit}
-          onChange={e => handleChange(i, e.target.value)}
-          onKeyDown={e => handleKeyDown(i, e)}
-          aria-label={`Digit ${i + 1}`}
-        />
-      ))}
-    </div>
-  );
-}
-```
-
----
-
-## 7. Multi-Select
-
-```jsx
-function MultiSelect({ options, value = [], onChange }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [search, setSearch] = useState('');
-
-  const filtered = options.filter(o =>
-    o.label.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const toggle = (option) => {
-    const exists = value.find(v => v.value === option.value);
-    const next = exists
-      ? value.filter(v => v.value !== option.value)
-      : [...value, option];
-    onChange?.(next);
-  };
-
-  const removeTag = (option) => {
-    onChange?.(value.filter(v => v.value !== option.value));
-  };
-
-  return (
-    <div className="multiselect">
-      <div className="tags">
-        {value.map(v => (
-          <span key={v.value} className="tag">
-            {v.label}
-            <button onClick={() => removeTag(v)} aria-label={`Remove ${v.label}`}>×</button>
-          </span>
-        ))}
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          onFocus={() => setIsOpen(true)}
-          placeholder="Search..."
-        />
-      </div>
-      {isOpen && (
-        <ul role="listbox" aria-multiselectable="true">
-          {filtered.map(o => (
-            <li
-              key={o.value}
-              role="option"
-              aria-selected={!!value.find(v => v.value === o.value)}
-              onClick={() => toggle(o)}
-            >
-              <input type="checkbox" checked={!!value.find(v => v.value === o.value)} readOnly />
-              {o.label}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-```
-
----
-
-## 8. Modal
+**5. Modal.**
 
 ```jsx
 function Modal({ isOpen, onClose, title, children }) {
   const overlayRef = useRef(null);
 
-  // Close on Escape
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
     if (isOpen) document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [isOpen, onClose]);
 
-  // Close on overlay click
   const handleOverlayClick = (e) => {
     if (e.target === overlayRef.current) onClose();
   };
 
-  // Trap focus (simplified)
   useEffect(() => {
     if (!isOpen) return;
     const focusable = overlayRef.current?.querySelector(
@@ -650,18 +358,12 @@ function Modal({ isOpen, onClose, title, children }) {
   if (!isOpen) return null;
 
   return (
-    <div
-      ref={overlayRef}
-      className="modal-overlay"
-      onClick={handleOverlayClick}
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-    >
+    <div ref={overlayRef} className="modal-overlay" onClick={handleOverlayClick}
+      role="dialog" aria-modal="true" aria-label={title}>
       <div className="modal-content">
         <header>
           <h2>{title}</h2>
-          <button onClick={onClose} aria-label="Close modal">×</button>
+          <button onClick={onClose} aria-label="Close modal">x</button>
         </header>
         {children}
       </div>
@@ -670,135 +372,95 @@ function Modal({ isOpen, onClose, title, children }) {
 }
 ```
 
-### Interview checklist
+Internally: the modal adds a keydown listener when open that handles Escape. It removes the listener in cleanup. Clicking the overlay closes the modal only if the click target is the overlay itself (not a child). The focus trap selects the first focusable element inside the modal and focuses it. `role="dialog"` and `aria-modal="true"` tell screen readers this is a modal that traps focus.
 
-- [ ] `role="dialog"` + `aria-modal="true"` for screen readers
-- [ ] Escape to close
-- [ ] Click outside to close
-- [ ] Focus trap (keep focus inside modal while open)
-- [ ] Restore focus to trigger element on close
-- [ ] Prevent body scroll when open (`overflow: hidden` on body)
-- [ ] Render via portal to avoid z-index stacking issues
-- [ ] Animation (fade overlay + slide content)
+## Internal Implementation
 
----
+**How React handles state updates.** When you call `setState`, React adds the update to a queue. During the next render, React processes the queue, computes the new state, and runs the component function. The return value is the new virtual DOM. React compares it with the previous virtual DOM (reconciliation) and applies only the changed parts to the real DOM.
 
-## 9. Toast / Notification
+**How useEffect scheduling works.** useEffect runs after the browser paints. The effect function runs asynchronously. The cleanup function from the previous render runs before the new effect. In the dropdown, the AbortController cleanup runs when the input value changes, cancelling the stale request before the new one starts.
 
-```jsx
-// Hook-based toast system
-function useToast() {
-  const [toasts, setToasts] = useState([]);
+**How IntersectionObserver works.** The browser's internals track element visibility. When an observed element crosses the threshold relative to the root, the browser queues a callback in the microtask queue. The callback receives an array of IntersectionObserverEntry objects with `isIntersecting`, `intersectionRatio`, and bounding box data. The callback runs asynchronously, not on the scroll event, so it does not block the main thread.
 
-  const addToast = useCallback((message, type = 'info', duration = 3000) => {
-    const id = Date.now();
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, duration);
-  }, []);
+**How refs work.** `useRef` creates an object with a `current` property. The same object persists across renders. Mutating `current` does not trigger a re-render. This makes refs ideal for storing DOM references, timer IDs, or any mutable value that should not cause re-renders.
 
-  const removeToast = useCallback((id) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
-  }, []);
+## Real World Example
 
-  return { toasts, addToast, removeToast };
-}
+Build a product search page with autocomplete, infinite scroll results, and a modal for product details.
 
-function ToastContainer({ toasts, removeToast }) {
-  return (
-    <div aria-live="polite" className="toast-container">
-      {toasts.map(t => (
-        <div key={t.id} className={`toast toast-${t.type}`} role="alert">
-          <span>{t.message}</span>
-          <button onClick={() => removeToast(t.id)} aria-label="Dismiss">×</button>
-        </div>
-      ))}
-    </div>
-  );
-}
-```
+Step 1: search input with autocomplete. Use the SearchableSelect component. It debounces input (300ms), cancels stale requests, and shows loading, empty, and error states.
 
----
+Step 2: search results with infinite scroll. Use the InfiniteList component with IntersectionObserver. Each page loads 20 products. When the sentinel enters the viewport, the next page loads. The loading flag prevents duplicate page loads.
 
-## 10. Multi-Step Form
+Step 3: product detail modal. When the user clicks a product, open the Modal with product details. Close on Escape, click outside, and the close button. Focus is trapped inside the modal.
 
-```jsx
-function MultiStepForm({ steps, onSubmit }) {
-  const [currentStep, setCurrentStep] = useState(0);
-  const [formData, setFormData] = useState({});
+Step 4: accessibility. The autocomplete has `aria-combobox` pattern. The results list has `aria-live="polite"` for screen reader updates. The modal has `role="dialog"` and `aria-modal="true"`.
 
-  const updateData = (data) => {
-    setFormData(prev => ({ ...prev, ...data }));
-  };
+Performance concerns: virtualize the product list if it grows beyond 500 items. Debounce the search input. Memoize expensive computations.
 
-  const next = () => {
-    if (currentStep < steps.length - 1) setCurrentStep(s => s + 1);
-  };
+## Tradeoffs
 
-  const prev = () => {
-    if (currentStep > 0) setCurrentStep(s => s - 1);
-  };
+**Controlled vs uncontrolled.** Controlled components give the parent full control over state. The parent owns the value and passes it down. This is more predictable but requires more code. Uncontrolled components manage their own state. They are simpler but harder to integrate. Best practice: support both. Check if the prop is provided (controlled) or undefined (uncontrolled).
 
-  const StepComponent = steps[currentStep].component;
+**IntersectionObserver vs scroll listener.** IntersectionObserver is callback-driven. It fires only when elements cross the viewport boundary. Scroll listeners fire on every pixel scroll, 60+ times per second on the main thread. IntersectionObserver performs better and is easier to use. But it has browser support considerations (Safari added it later).
 
-  return (
-    <div>
-      <nav aria-label="Progress">
-        {steps.map((step, i) => (
-          <span key={i} className={i === currentStep ? 'active' : i < currentStep ? 'completed' : ''}>
-            {step.title}
-          </span>
-        ))}
-      </nav>
-      <StepComponent data={formData} updateData={updateData} />
-      <div>
-        {currentStep > 0 && <button onClick={prev}>Back</button>}
-        {currentStep < steps.length - 1 && <button onClick={next}>Next</button>}
-        {currentStep === steps.length - 1 && <button onClick={() => onSubmit(formData)}>Submit</button>}
-      </div>
-    </div>
-  );
-}
-```
+**useState vs useReducer.** useState is simpler for single values. useReducer is better for complex state with multiple fields that update together. The dropdown could use either. useState is fine for 4 fields. useReducer wins when the state logic grows.
 
----
+**Fixed vs dynamic height in virtual lists.** Fixed height is simple. The math is straightforward: totalHeight = count * itemHeight. Dynamic height requires measuring each row with ResizeObserver and maintaining a cumulative height array. It is more complex but handles real content. Libraries like react-virtuoso handle dynamic heights well.
 
-## Common Machine Coding Prompts: Quick Reference
+**Portal vs no portal for modals.** A portal renders the modal outside the parent DOM hierarchy. This avoids z-index stacking issues and overflow clipping. Without a portal, the modal inherits the parent's stacking context, which can hide it behind other elements. Use a portal for production modals.
 
-| Prompt | Key technique | Time |
-|---|---|---|
-| Searchable dropdown | debounce + AbortController + keyboard nav | 15-20m |
-| Tabs | controlled/uncontrolled + aria | 5-10m |
-| Accordion | single vs multi expand | 5-10m |
-| Modal | portal + focus trap + escape | 10-15m |
-| Toast | hook + auto-dismiss + stack | 10-15m |
-| Infinite scroll | IntersectionObserver | 10-15m |
-| Virtual list | windowing math + scroll calc | 15-20m |
-| OTP input | ref array + paste handling | 10-15m |
-| Multi-select | tags + filter + keyboard | 15-20m |
-| Multi-step form | wizard pattern + progress | 10-15m |
-| Kanban board | drag state + column logic | 20-25m |
-| Editable table | inline edit + validation | 15-20m |
-| Image uploader | drag-drop zone + preview | 15-20m |
-| Date picker | calendar grid + keyboard | 20-25m |
-| Pagination | page calculation + URL sync | 10-15m |
+## Common Mistakes
 
----
+- Store derived values in state. If a value can be computed from existing state, compute it during render.
+- Forget to handle the loading, empty, and error states. The UI shows a blank screen during loading or on error.
+- Forget keyboard navigation. The component works with mouse only. Screen reader and keyboard users cannot use it.
+- Forget ARIA attributes. Screen readers announce unhelpful generic roles.
+- Forget to abort stale requests. Two API calls race. The slow one overwrites the fast one.
+- Forget to disconnect IntersectionObserver. The observer keeps firing after the component unmounts, causing setState on unmounted component.
+- Use index as key in lists that can reorder. Causes incorrect DOM reuse and state bugs.
+- Forget to prevent body scroll when a modal is open. The user scrolls the background content.
+- Forget to restore focus when modal closes. The user is left without focus.
 
-## Summary
+## SDE-2 Interview Answer
 
-> **Narrate the journey: clarify → state → happy path → edges → a11y → perf.**
-> The interviewer is evaluating your process, not typing speed. A working component with
-> keyboard support and screen reader attributes beats a perfect but silent solution.
+**Mid-level variant.** "I start by clarifying the requirements. Then I define the minimal state. For a dropdown, I need isOpen, inputValue, highlightedIndex, items, and status. I build the happy path: input filters list, click selects. Then I add keyboard navigation: ArrowUp, ArrowDown, Enter, Escape. Then I add accessibility: aria roles and attributes. I test loading, empty, and error states last."
 
----
+**Senior variant.** "My process is clarify, state, happy path, edge cases, accessibility, performance. I always ask: is this controlled or uncontrolled? Sync or async? What are the interaction states? I use a discriminated union for status so impossible states are impossible. I handle keyboard and mouse equally. I abort stale async requests. I talk through tradeoffs as I code: why I use useRef for the sentinel, why I overscan by 2, why I check `e.target === overlayRef.current` for modal close."
 
-## Homework
+**Engineering Lead variant.** "I teach the team a repeatable component-building process. Every component must handle loading, empty, error, and success states. Every interactive component must support keyboard and screen reader. We use a controlled-uncontrolled pattern consistently. We write tests that cover edge cases: empty input, rapid typing, paste, backspace. We review each other's components for accessibility before shipping. The process removes the guesswork from building UI."
 
-1. Build `useDebounce` hook and use it in an autocomplete
-2. Build a Kanban board with `useState` + drag handlers (no library)
-3. Build a data table with sort, filter, and column resize
-4. Build a DatePicker calendar from scratch (no library)
-5. Build an editable table where clicking a cell turns it into an input
-6. Build a drag-and-drop file uploader with preview
+## Follow-up Questions
+
+1. Your infinite scroll fires twice in quick succession when the user scrolls fast. How do you prevent duplicate page loads? (Answer: add a `loading` flag. Set it to true when loadMore starts. Check it at the beginning of loadMore and return early if true. Reset to false after the fetch completes. This is a guard, not a debounce.)
+
+2. The modal closes when the user clicks inside the modal content but the click event bubbles to the overlay. How does your close-on-overlay-click check work? (Answer: `if (e.target === overlayRef.current)` checks that the click target is the overlay element itself, not a child. Because the overlay is the outermost element, clicks on the modal content have content elements as targets, not the overlay.)
+
+3. Your virtual list uses fixed item height. But the items have variable content. What happens to the scroll position when items are different heights? (Answer: the scroll bar jumps because the actual content height differs from the calculated `totalHeight`. Fix: use ResizeObserver to measure each item's actual height, store a cumulative height array, and calculate the visible range by binary searching the array for the scrollTop position.)
+
+4. An OTP input with 6 boxes. The user pastes a 6-digit code. Your onChange handler must split the paste into individual boxes. But the React onChange event fires once with the full pasted value. How do you handle this? (Answer: the handleChange function splits the value by characters, filters digits, and writes each digit to the corresponding box by index. The onChange handler on the first input receives the full pasted value. The handler iterates over the digits and assigns them to consecutive boxes. The remaining boxes stay empty.)
+
+5. Your dropdown has 10000 options. The filter function runs on every keystroke and blocks the main thread for 200ms. How do you make it fast? (Answer: virtualize the options list. Use the virtual list pattern: render only the visible options. This drops the DOM nodes from 10000 to about 20. The filter still runs on all 10000 items in JavaScript, but that is fast (less than 5ms for 10000 strings). The bottleneck is DOM, not JavaScript. Alternatively, use a Web Worker for the filter or debounce the input to reduce filter calls.)
+
+## Mental Trigger
+
+Minimal state, keyboard and mouse, loading empty error success.
+
+## One Page Revision
+
+- Process: clarify, state, happy path, edge cases, accessibility, performance.
+- Minimal state: store only what cannot be derived.
+- Status: use discriminated union (loading, empty, error, success).
+- Controlled vs uncontrolled: check if prop is provided.
+- Searchable dropdown: isOpen, inputValue, highlightedIndex, items, status.
+- Tabs: TabList + Tab + TabPanel. aria-selected, aria-controls. Arrow keys.
+- Accordion: single vs multi-expand. aria-expanded, aria-controls.
+- Infinite scroll: IntersectionObserver + sentinel + loading guard.
+- Virtual list: totalHeight spacer + absolute positioned visible rows + overscan.
+- Modal: overlay click check, Escape listener, focus trap, body scroll lock, portal.
+- OTP: ref array, paste splitting, auto-focus next, backspace to previous.
+- Toast: hook with addToast, auto-dismiss, removeToast. aria-live="polite".
+- Multi-step form: step index + wizard pattern + progress indicator.
+- Keyboard: ArrowUp/Down/Left/Right, Enter, Escape, Tab.
+- ARIA: combobox, listbox, option, dialog, tablist, tab, tabpanel, aria-selected, aria-controls, aria-activedescendant, aria-modal, aria-live.
+- Perf: memo, debounce, AbortController, virtualization, IntersectionObserver.

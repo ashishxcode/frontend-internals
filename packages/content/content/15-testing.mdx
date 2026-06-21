@@ -5,203 +5,153 @@ part: "Web Platform & Quality"
 description: "Unit, integration, e2e testing strategies"
 ---
 
+## Problem
 
-> Prerequisites: React component rendering (Ch 03), hooks and effects (Ch 05), async data fetching with TanStack Query (Ch 10). The JD values "clean, maintainable,
-> scalable code" and shipping weekly. Tests are how you ship fast without fear.
+Your test suite breaks every time you refactor. You rename a state variable and twenty tests fail. You swap a div for a section and ten more fail. These tests do not catch real bugs. They just make you afraid to change code. The team stops refactoring. Technical debt piles up. Shipping slows down.
 
----
+## Why Existing Solution Failed
 
-## The one mental model
+The old approach tested implementation details. Tests checked internal state with `wrapper.state('isOpen')`. They checked CSS classes with `wrapper.find('.dropdown-inner')`. They snapshot entire component trees. None of this tests what the user experiences. These tests pass when the UI is broken and fail when the UI works fine. They give false confidence with high maintenance cost.
 
-> **Test BEHAVIOR at a boundary, not implementation details. Pick the boundary a real consumer
-> sees. For a component, that is what the USER sees and does (rendered output and interactions).
-> For a module, that is its public API. Tests coupled to internals (state names, private methods,
-> render counts) break on every refactor and test nothing real. The goal is confidence per unit
-> of maintenance. A test should fail when the behavior breaks and only then.**
+The test pyramid said write lots of unit tests, some integration tests, and a few e2e tests. For UI code this is wrong. Unit tests for components are brittle. They test rendering, not behavior. The pyramid misses the real confidence zone.
 
-From "behavior at a boundary" you can understand why React Testing Library queries by role or text (what
-the user perceives) instead of by class. You understand why you mock the network (a real boundary) but not internal
-functions. You understand where unit, integration, and e2e each pay off (the testing trophy).
+## Mental Model
 
----
+Test BEHAVIOR at a boundary, not implementation details. Pick the boundary a real consumer sees. For a component that is what the USER sees and does, rendered output and interactions. For a module that is its public API. Tests coupled to internals, state names, private methods, render counts, break on every refactor and test nothing real. The goal is confidence per unit of maintenance. A test should fail when the behavior breaks and only then.
 
-## Learning Objectives
-
-1. Test behavior, not implementation; explain why that survives refactors.
-2. Use React Testing Library queries (role/label/text) and user-event interactions.
-3. Mock the network boundary with MSW; test async UI (loading/error/data).
-4. Place unit vs integration vs e2e (the trophy) and pick per cost/confidence.
-
----
-
-## Key Mental Models
-
-- **A good test asserts what a user/consumer observes**, so refactors that preserve behavior
-  don't break it.
-- **Query like a user:** by role, label, visible text. Not by test-id-everything or CSS class.
-- **Mock real boundaries** (network), not your own internals.
-- **Integration tests give the best confidence-per-cost** for UI (the trophy's fat middle).
-
----
-
-## Introduction
-
-Most teams test poorly. They write brittle tests tied to implementation. Those tests break on refactor and don't
-catch real bugs. The fix is one principle: test behavior at a boundary. This is exactly how
-React Testing Library is designed. The library says "the more your tests resemble the way your software is used,
-the more confidence they give." Learn that principle and the tooling follows.
-
----
-
-## Problem: implementation tests rot
-
-```jsx
-// ❌ implementation-coupled: asserts internal state + structure
-expect(wrapper.state('isOpen')).toBe(true);
-expect(wrapper.find('.dropdown-inner').length).toBe(1);
-```
-
-Rename `isOpen`, restructure the markup, or switch to a hook. These tests break even though the UI
-works the same. They test *how* the code is built, not *what* it does. Refactors become expensive.
-People stop refactoring. The boundary is wrong.
+## Visualization
 
 ```mermaid
 flowchart LR
-  impl["test internals (state, classes, render count)"] --> brittle["breaks on refactor,<br/>misses real bugs"]
-  beh["test behavior (what user sees/does)"] --> robust["survives refactor,<br/>catches real regressions"]
+  impl["test internals (state, classes, render count)"] --> brittle["breaks on refactor, misses real bugs"]
+  beh["test behavior (what user sees/does)"] --> robust["survives refactor, catches real regressions"]
 ```
 
----
+The testing trophy shows where to invest:
 
-## Engine Simulation: a behavior test (RTL)
+```
+        /\        e2e (Playwright/Cypress): real browser, whole flows.
+       /  \       High confidence, slow/flaky/expensive. Few, critical paths.
+      /----\
+     /      \     INTEGRATION (RTL + MSW): components plus real interactions plus mocked network.
+    /        \    Best confidence per cost. The bulk of UI tests.
+   /----------\
+  /            \  unit: pure functions, hooks, utils. Fast, cheap. Many, for logic.
+ /--------------\
+  static: TypeScript and ESLint (catch whole class of bugs for free)
+```
+
+## Engine Simulation
 
 ```jsx
 test("submitting the form shows a success message", async () => {
   render(<ContactForm />);
-  // query like a user perceives the UI:
   await userEvent.type(screen.getByLabelText(/email/i), "ada@x.com");
   await userEvent.click(screen.getByRole("button", { name: /save/i }));
-  // assert observable behavior:
   expect(await screen.findByText(/saved/i)).toBeInTheDocument();
 });
 ```
 
-Why this test is strong: it names elements the way a user does (the label "Email", the button "Save").
-It uses real interactions (`userEvent`). It asserts visible output. Rename a state variable,
-swap a `div` for a `section`, or refactor to a hook. The test still passes because the *behavior* is
-unchanged. Query priority (most to least preferred): **role, then label, then text, then test-id**. Use test-id only
-when nothing user-facing fits.
+Why this test is strong: it names elements the way a user does, the label "Email", the button "Save". It uses real interactions with `userEvent`. It asserts visible output. Rename a state variable, swap a div for a section, or refactor to a hook. The test still passes because the behavior is unchanged.
 
-`findBy*` (async) waits for the element to appear. This is essential for data that arrives after a
-fetch (Ch 02 microtasks). `getBy*` is sync (must exist now), `queryBy*` for asserting absence.
+Internally, RTL uses DOM testing library utilities. `getByLabelText` finds the input by searching for a label element with matching text. It uses the `htmlFor` attribute or `aria-labelledby` to find the associated input. It does not care about your CSS class or component structure. `findByText` uses a combination of text content matching and waits up to a default timeout of 1000ms using a polling mechanism. It retries every 50ms until the element appears or the timeout expires. This is why async content works: the test waits for the data to arrive and render.
 
----
+## Internal Implementation
 
-## Mocking the boundary: MSW
+RTL query priority, most preferred first:
+
+1. **Role**: `getByRole('button', { name: /save/i })`. Looks up the accessible role computed from the element. This tests accessibility and behavior together.
+2. **Label**: `getByLabelText(/email/i)`. Finds an input by its associated label. Matches how screen readers navigate.
+3. **Text**: `getByText(/saved/i)`. Finds by visible text content.
+4. **Test ID**: `getByTestId('submit-btn')`. Last resort when nothing user-facing fits.
+
+`findBy*` is async. It returns a promise that resolves when the element appears. Internally, it uses `waitFor` which runs the query in a loop checking every 50ms. This is essential for data that arrives after a fetch.
+
+`getBy*` is sync. It throws if the element is not found immediately. Use it for elements that must exist now.
+
+`queryBy*` is sync. It returns null instead of throwing. Use it for asserting absence.
+
+MSW (Mock Service Worker) intercepts requests at the network layer. In test environments it uses a polyfill that intercepts at the `fetch` or `XMLHttpRequest` level. The code never knows it is talking to a mock. This is better than stubbing your own `api.getContacts` function because stubbing skips the real code path. MSW tests the actual integration with a controlled server.
+
+## Real World Example
+
+A contacts list that fetches from an API. The test must cover loading, success, and error states.
 
 ```js
-// Mock the NETWORK (a real boundary), not your fetch function
 const server = setupServer(
   http.get("/contacts", () => HttpResponse.json([{ id: 1, name: "Ada" }]))
 );
+
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
 test("renders contacts from the API", async () => {
   render(<Contacts />);
-  expect(await screen.findByText("Ada")).toBeInTheDocument();   // loading → data
+  expect(await screen.findByText("Ada")).toBeInTheDocument();
+});
+
+test("shows error when API fails", async () => {
+  server.use(http.get("/contacts", () => HttpResponse.error()));
+  render(<Contacts />);
+  expect(await screen.findByText(/error/i)).toBeInTheDocument();
 });
 ```
 
-MSW (Mock Service Worker) intercepts requests at the network layer. So your code's real
-fetch and Query path runs. You are testing the actual integration, just with a controlled server.
-This is far better than stubbing your own `api.getContacts`, which skips the real code path. You can also
-return a 500 to test the error state. You can delay to test loading.
+Internally, MSW uses a Service Worker in the browser to intercept fetch requests at the network level. The real `fetch` function runs. The request never reaches the server. The response comes from the handler. This tests loading, success, and error paths through the actual data fetching code including TanStack Query, error boundaries, and retries.
 
----
+## Tradeoffs
 
-## The testing trophy (placement)
+| Approach | Confidence | Cost | Best for |
+|---|---|---|---|
+| Static (TS, ESLint) | Medium | Near zero | Catching type errors and null bugs |
+| Unit | High per bug | Low | Pure logic: reducers, formatters, validators |
+| Integration (RTL + MSW) | Highest per cost | Medium | Feature-level UI: forms, lists, search |
+| E2E (Playwright) | Highest overall | High (slow, flaky) | Critical journeys: login, checkout, signup |
 
-```
-        /\        e2e (Playwright/Cypress): real browser, whole flows.
-       /  \       High confidence, slow/flaky/expensive → few, critical paths.
-      /----\
-     /      \     INTEGRATION (RTL + MSW): components + real interactions + mocked network.
-    /        \    Best confidence-per-cost → the bulk of UI tests.
-   /----------\
-  /            \  unit: pure functions, hooks, utils. Fast, cheap → many, for logic.
- /--------------\
-  static: TypeScript + ESLint  (catch a whole class of bugs for free, Ch 09)
-```
-
-- **Static** (TS, lint): free bug class elimination. This is the base.
-- **Unit**: pure logic (a reducer, a `formatDate`, a validation fn). Fast and cheap.
-- **Integration**: render a feature, interact, assert. Mock only the network. **Where to invest.**
-- **E2E**: real browser, critical user journeys (login, checkout). Few, because slow and flaky.
-
-The old "test pyramid" said mostly unit tests. The testing trophy says mostly **integration** for UI. That is
-where real confidence lives for component apps.
-
----
-
-## Interview Discussion (reason first)
-
-**Q1. "Why query by role/text instead of class or test-id?"**
-> "Because tests should resemble how users use the app. Users find a button by its label, not by
-> `.btn-primary`. Querying by role or label means the test asserts real, accessible behavior. It
-> survives refactors that change structure but not behavior. test-id is a last resort."
-
-**Q2. "What do you mock?"**
-> "Real boundaries: the network (MSW), time, randomness. Not my own modules. Mocking internals
-> tests the mock, not the code. Mocking the network lets the real fetch and render path run with a
-> controlled response. So I can test loading, error, and success for real."
-
-**Q3. "Unit vs integration vs e2e: where do you invest?"**
-> "Static and unit for pure logic. The bulk in **integration** (RTL + MSW) for best
-> confidence per cost. A few **e2e** for critical journeys since they are slow and flaky. That is the
-> testing trophy. UI confidence comes from integration, not a pile of unit tests."
-
-*Scoring:* full = behavior-at-boundary + query-like-user + mock-network-not-internals + trophy.
-
----
+The old pyramid said mostly unit tests. The testing trophy says mostly integration for UI. That is where real confidence lives for component apps. E2E is too slow and flaky for everything. Unit tests do not catch UI bugs. Integration tests hit the sweet spot.
 
 ## Common Mistakes
 
-- **Asserting internal state, render counts, or CSS classes.** This makes tests brittle and hostile to refactors.
-- **Mocking your own functions** instead of the network. This tests the mock, not the code.
-- **`getBy` for async content.** It throws before the content arrives. Use `findBy` instead.
-- **Over-investing in e2e.** This creates slow, flaky suites that people start ignoring.
-- **Snapshot tests of everything.** This creates noise. Snapshots assert structure, not behavior.
+- Asserting internal state, render counts, or CSS classes. This makes tests brittle and hostile to refactors.
+- Mocking your own functions instead of the network. This tests the mock, not the code.
+- Using `getBy` for async content. It throws before the content arrives. Use `findBy` instead.
+- Over-investing in e2e. This creates slow, flaky suites that people start ignoring.
+- Snapshot tests of everything. This creates noise. Snapshots assert structure, not behavior.
 
----
+## SDE-2 Interview Answer
 
-## Interview Questions
+**Mid-level variant:**
 
-1. Rewrite an implementation-coupled test as a behavior test. Why does the new one survive a
-   refactor?
-2. RTL query priority: why role first, test-id last?
-3. Why mock with MSW instead of stubbing `api.getX`? What does each test path cover?
-4. Place these on the trophy: a date formatter, a checkout flow, a search-and-filter feature.
-5. `getBy` vs `findBy` vs `queryBy`: when do you use each?
+"I write tests that assert behavior, not implementation. I use React Testing Library and query by role or label, not by CSS class. I mock the network with MSW so the real data fetching code runs. For a form, I render it, type into the email field using getByLabelText, click save using getByRole, and assert the success message appears with findByText. This test survives refactors because it tests what the user sees and does."
 
----
+**Senior variant:**
 
-## Homework
+"I choose the testing strategy by confidence per cost. Static analysis and unit tests cover pure logic. The bulk of my UI tests are integration tests with RTL and MSW. These give the best confidence per dollar. E2E is reserved for three to five critical user journeys because it is slow and flaky. I do not snapshot entire components. I do not assert internal state. I treat the testing trophy as my guide: static base, unit for logic, heavy integration, light e2e."
 
-1. Write an RTL test for a form: type, submit, assert a success message. Use only role and label
-   queries. Then refactor the component's internals and confirm the test still passes.
-2. Add MSW; test loading → data and a 500 → error path for a TanStack-Query component.
-3. In `NOTES.md`: the trophy layers + "test behavior at a boundary" in one line.
+**Engineering Lead variant:**
 
----
+"I establish testing standards for the team. The rule is simple: test behavior at a consumer boundary. For components that boundary is the rendered output and user interaction. For modules it is the public API. I enforce this in code review. If a test asserts internal state I ask the author to rewrite it. I push the team to use MSW for network mocking instead of stubbing. This keeps the test suite fast and reliable. I measure test quality by whether a refactor breaks the tests. If tests break on behavior-preserving changes we have a coupling problem."
 
-## Summary
+## Follow-up Questions
 
-- **Test behavior at a consumer boundary**, not implementation. That is what survives refactors
-  and catches real regressions.
-- **RTL queries like a user** (role, then label, then text, then test-id) and uses `userEvent`. Use
-  `findBy` for async content.
-- **Mock real boundaries (network via MSW)**, not your own internals. This way the real code path runs.
-- **Testing trophy:** static (TS/lint) + unit (logic) + heavy **integration** (best
-  confidence per cost) + few **e2e** (critical journeys).
+1. Rewrite an implementation-coupled test as a behavior test. Why does the new one survive a refactor?
+2. RTL query priority: why role first and test-id last? What does each query actually search in the DOM?
+3. Why mock with MSW instead of stubbing `api.getX`? What code path does each approach cover?
+4. Place these on the trophy: a date formatter, a checkout flow, a search-and-filter feature. Justify each.
+5. `getBy` vs `findBy` vs `queryBy`: when do you use each? What happens internally when you pick the wrong one?
 
-## Go deeper
-Ch 09 (TS as the static base), Ch 10 (testing Query components with MSW). Kent C. Dodds'
-testing-trophy writing is the canonical source once this principle is solid.
+## Mental Trigger
+
+Test what the user sees and does.
+
+## One Page Revision
+
+- Test behavior at a consumer boundary, not implementation.
+- RTL queries like a user: role first, label second, text third, test-id last.
+- Use `findBy` for async content. `getBy` for sync content. `queryBy` for absence.
+- Mock real boundaries (network via MSW), not your own internals.
+- Testing trophy: static base, unit for logic, heavy integration, light e2e.
+- Integration tests give best confidence per cost for UI.
+- A test survives refactors when it asserts behavior, not structure.
+- E2E is for critical journeys only.

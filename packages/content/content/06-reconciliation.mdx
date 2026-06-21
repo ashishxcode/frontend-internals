@@ -5,54 +5,28 @@ part: "React Internals"
 description: "Diffing algorithm, keys, reconciliation"
 ---
 
-
-> Builds on Ch 04 (Fibers, the WIP tree) and Ch 03 (render produces an element tree). This is
-> the diff that decides what the commit actually touches.
-
----
-
-## The one mental model
-
-> **React does NOT compare your new tree against the DOM. It compares the new element tree
-> against the previous one, position by position. At each position it asks ONE question: "same
-> type as before?" Same type means keep the DOM node and the Fiber (and its state), just update
-> props. Different type means throw away that node and its entire subtree (and its state) and build
-> fresh. `key` overrides "position" with "identity" so React can match items that moved.**
-
-From this you understand why changing a wrapper `<div>` to a `<section>` wipes child state. You see why list state gets cross-wired without keys. You can tell why index-as-key causes bugs on reorder or insert. And you know why a full tree diff would be too slow. No need to memorize "rules of keys."
-
----
-
-## Learning Objectives
-
-1. Explain React's O(n) diff heuristics and why it avoids the O(n³) general tree diff.
-2. Understand "same type means update, different type means remount" and its effect on state.
-3. Explain keys as identity. Predict bugs from missing or index keys.
-
----
-
-## Key Mental Models
-
-- **Diff is per-position, type-first.** Type mismatch means unmount subtree and mount new.
-- **State is tied to position-in-tree (a Fiber), not to your JSX variable.** Move or replace the
-  position and the state goes with the Fiber, or it dies.
-- **`key` re-defines identity within a list**, so reorders reuse the right Fiber.
-
----
-
-## Introduction
-
-You have seen "add a key" warnings. You may have seen a bug where an input's value jumped to the wrong row. Both come from one thing: how React matches this render's elements to last render's Fibers. Understand this matching model and you can predict when state survives, resets, or moves.
-
----
-
 ## Problem
 
-A general optimal tree diff is **O(n³)**, far too slow for UI that re-renders constantly. React needs "good enough" diffing in **O(n)**. It uses assumptions that hold for UIs.
+React receives a new element tree each render (Ch 03). It must update the DOM to match. The naive approach, a general tree diff, is O(n³). Far too slow for UI that re-renders constantly.
 
-Two heuristics make it linear:
-1. **Different element types produce different trees.** If the type changed at a position, do not bother diffing children. Replace the whole subtree.
-2. **Developers can mark stable identity with `key`.** Lists that reorder can be matched by key instead of position.
+React needs a "good enough" diff in O(n). It uses two assumptions that hold for real UIs: different element types produce different trees, and developers can mark stable identity with `key`.
+
+## Why Existing Solution Failed
+
+Before React, developers manipulated the DOM directly (jQuery, vanilla JS). Each state change required manual DOM mutations. This was error-prone and hard to maintain. Early frameworks like Backbone.js re-rendered entire templates on any change, which was wasteful.
+
+React's virtual DOM plus diffing algorithm was the first practical O(n) approach. But the abstraction leaks when developers misuse keys, cause unnecessary remounts, or misunderstand when state resets. The problem is not the diffing algorithm. It is knowing what triggers a remount vs an update.
+
+## Mental Model
+
+React does NOT compare your new tree against the DOM. It compares the new element tree against the previous one, position by position. At each position it asks one question: "same type as before?" Same type means keep the DOM node and the Fiber (and its state), just update props. Different type means throw away that node and its entire subtree (and its state) and build fresh. `key` overrides "position" with "identity" so React can match items that moved.
+
+Key ideas:
+- Diff is per-position, type-first. Type mismatch means unmount subtree and mount new.
+- State is tied to position-in-tree (a Fiber), not to your JSX variable. Move or replace the position and the state goes with the Fiber, or it dies.
+- `key` re-defines identity within a list, so reorders reuse the right Fiber.
+
+## Visualization
 
 ```mermaid
 flowchart TD
@@ -61,65 +35,13 @@ flowchart TD
   q -->|yes| keep["reuse DOM node + Fiber + state<br/>update changed props, recurse to children"]
 ```
 
----
-
-## Engine Simulation: type change wipes state
-
-```jsx
-{isEditing ? <input defaultValue={name} /> : <input defaultValue={name} />}  // same type
-```
-Same type at the same position. React reuses the input Fiber. Its internal state (cursor, uncontrolled
-value) survives. Now:
-
-```jsx
-{isWide ? <div><Profile/></div> : <section><Profile/></section>}
-```
-`div` to `section` is a **type change** at that position. React unmounts the whole subtree.
-`Profile` is destroyed and **remounted**, losing its state (and re-running its effects). Same
-JSX `Profile`, but it sits under a position whose type flipped. State lives on the Fiber at that
-position, and the position was rebuilt.
-
-```
-render A:  <div>      render B:  <section>
-             └ Profile(state=X)     └ Profile(state= fresh!)   ← type changed → remount
-```
-
----
-
-## Engine Simulation: lists and the index-key bug
-
-```jsx
-{items.map((it, i) => <Row key={i} item={it} />)}   // ❌ index as key
-```
-
-You have rows A, B, C (keys 0,1,2). Each `<Row>` holds local state (say an open/closed toggle).
-Now you **prepend** X. The list becomes X, A, B, C with keys 0,1,2,3:
-
-```
-before:  key0→A(stateA)  key1→B(stateB)  key2→C(stateC)
-after :  key0→X          key1→A          key2→B          key3→C
-match by key:
-  key0: A→X  reuse Fiber → X now shows A's state!   (toggle leaks)
-  key1: B→A  reuse Fiber → A shows B's state
-  ...
-```
-
-React matched by `key=0` and decided "row 0 is the same row, just new props." So it kept row 0's
-**state** and handed it to X. Every row's state shifted to the wrong item. The fix is a key that
-follows the *item*, not the slot:
-
-```jsx
-{items.map((it) => <Row key={it.id} item={it} />)}   // ✅ stable identity
-```
-
-Now `key=A.id` matches A's Fiber wherever A moves. Prepending X just mounts one new Fiber and
-reuses the rest correctly.
+Same type means reuse. Different type means rebuild. That is the entire diffing heuristic.
 
 ```mermaid
 flowchart LR
   subgraph indexkey["key = index (bad)"]
     direction TB
-    i["prepend X → every position's<br/>'identity' shifts → state mismatched"]
+    i["prepend X -> every position's<br/>'identity' shifts -> state mismatched"]
   end
   subgraph idkey["key = item.id (good)"]
     direction TB
@@ -127,127 +49,180 @@ flowchart LR
   end
 ```
 
-**When is index-as-key fine?** Only for static lists that never reorder, insert, or delete in the middle, and whose rows hold no state. Otherwise use a stable id.
+Index keys shift identity on prepend or reorder. Stable keys follow the item wherever it moves.
 
----
+## Engine Simulation
 
-## React Internals
+**Type change wipes state.**
 
-- During `beginWork` (Ch 04), React reconciles a Fiber's children. For single children it does a type comparison. For arrays it builds a key-to-Fiber map from the current children. It matches new children by key, falling back to index when there is no key.
-- Match with same type means clone the Fiber as WIP and update props. No match or type change means flag for deletion (old) and placement (new). These flags drive the commit phase DOM ops.
-- The "reset state on prop change" trick: give a component a `key` that changes when you *want* a remount. For example, `<Editor key={docId} />` resets editor state per document. This uses keys deliberately to force identity change.
+```jsx
+{isWide ? <div><Profile/></div> : <section><Profile/></section>}
+```
 
----
+What happens internally: `div` to `section` is a type change at that position. React unmounts the whole subtree. `Profile` is destroyed and remounted, losing its state and re-running its effects. Same JSX `Profile`, but it sits under a position whose type flipped. State lives on the Fiber at that position, and the position was rebuilt.
 
-## Interview Discussion (reason first)
+```
+render A:  <div>      render B:  <section>
+             └ Profile(state=X)     └ Profile(state=fresh)   ← type changed -> remount
+```
 
-**Q1. "Why does React need keys?"**
+**Lists and the index-key bug.**
 
-*Plausible-but-wrong:* "For performance, so it renders faster."
+```jsx
+{items.map((it, i) => <Row key={i} item={it} />)}   // index as key
+```
 
-*Correction:* Primarily for **correctness** of identity in dynamic lists. Performance is a bonus.
-Without stable keys React matches by position. So reorders and inserts make it reuse the wrong
-Fiber. State and DOM attach to the wrong item. Keys tell React "this element is *this* item,
-wherever it moved."
+What happens internally: You have rows A, B, C with keys 0, 1, 2. Each `<Row>` holds local state (say a checkbox toggle). Now you prepend X. The list becomes X, A, B, C with keys 0, 1, 2, 3.
 
-*Model answer:* "Keys give list children stable identity so React matches by item, not slot.
-Without them (or with index keys), inserting or reordering reuses Fibers for the wrong items.
-This leaks state and causes subtle bugs."
+```
+before:  key0->A(stateA)  key1->B(stateB)  key2->C(stateC)
+after :  key0->X          key1->A          key2->B          key3->C
+match by key:
+  key0: A->X  reuse Fiber -> X now shows A's state!   (toggle leaks)
+  key1: B->A  reuse Fiber -> A shows B's state
+```
 
-**Q2. "Changing a wrapper from div to section reset my form. Why?"**
+React matched by `key=0` and decided "row 0 is the same row, just new props." So it kept row 0's state and handed it to X. Every row's state shifted to the wrong item.
 
-*Model answer:* "Type change at that position makes React unmount the subtree and mount fresh.
-Descendant state and effects reset. State is tied to the Fiber at a position. The position was
-rebuilt."
+The fix is a key that follows the item, not the slot:
 
-**Q3. "When is `key={index}` acceptable?"**
+```jsx
+{items.map((it) => <Row key={it.id} item={it} />)}   // stable identity
+```
 
-*Model answer:* "Static, never-reordered, stateless lists. Anything that reorders, inserts, deletes,
-or whose rows hold state needs a stable id."
+Now `key=A.id` matches A's Fiber wherever A moves. Prepending X just mounts one new Fiber and reuses the rest correctly.
 
-*Scoring:* full answer means identity-not-perf, type-change-remount, and index-key bug walk. Fail answer means "keys just silence the warning."
+When is index-as-key fine? Only for static lists that never reorder, insert, or delete in the middle, and whose rows hold no state. Otherwise use a stable id.
 
----
+## Internal Implementation
 
-## Common Mistakes
+**Two reconcilers from one body.** `createChildReconciler(shouldTrackSideEffects)` produces two functions from the same code: `mountChildFibers` (skips deletion tracking, used for initial mount) and `reconcileChildFibers` (tracks Placement and ChildDeletion flags, used for updates).
 
-- **Index keys on dynamic or stateful lists.** State leaks to wrong rows.
-- **Using a random key** (`key={Math.random()}`). This remounts every render and destroys state and perf.
-- **Forgetting that a type change remounts.** You lose animation or input state when restructuring.
-- **Assuming React diffs against the DOM.** It diffs element tree against previous element tree.
+`reconcileChildFibersImpl` branches on the new child's type:
+- Single element (`$$typeof === REACT_ELEMENT_TYPE`) calls `reconcileSingleElement`
+- String or number calls text node handler
+- Array calls `reconcileChildrenArray`
+- Iterable calls the iterator variant
 
----
+**Single element reuse rule.** `reconcileSingleElement` / `updateElement` reuse the existing fiber if `key` matches AND `current.elementType === element.type`. Then `useFiber(current, props)` (which is `createWorkInProgress` from Ch 04). State is preserved. Otherwise `deleteChild` + create a fresh fiber with `Placement`. State is lost.
 
-## Interview Questions
-
-1. Walk the prepend-with-index-key bug, Fiber by Fiber. Then fix it.
-2. Why is the general tree-diff O(n³) and what two assumptions make React's O(n)?
-3. How would you *intentionally* force a subtree to reset its state? (key trick.)
-4. Same-type vs different-type at a position: what happens to DOM, Fiber, state, effects?
-5. Is `key` globally unique? (No. Unique among siblings.)
-
----
-
-## Homework
-
-1. Build a list of rows each with a checkbox (local state). Use `key={index}`, prepend an item, watch the checks jump. Switch to `key={item.id}`, confirm fixed.
-2. Wrap a stateful child in `div` vs `section` behind a toggle. Observe the remount (log in an effect). Explain using "position type changed."
-3. In `NOTES.md`: one sentence on what `key` actually identifies.
-
----
-
-## Summary
-
-- React diffs **new element tree vs previous**, **per position**, **type-first**. It runs in O(n) via two heuristics: different type means different tree, and `key` marks identity.
-- **Same type means reuse Fiber, DOM, and state, then update props. Different type means unmount subtree and remount.** State and effects reset.
-- **State lives on the Fiber at a position**, not on your JSX. `key` redefines identity in lists so reorders match by item. Index and random keys break this and leak or destroy state.
-- Use a changing `key` deliberately to force a reset.
-
----
-
-# ═══ Internals Deep-Dive (source-verified) ═══
-
-> Verified against `facebook/react` v19.2.0, `react-reconciler/src/ReactChildFiber.js`. The
-> position/type/key model above is exactly what the code does. Here are the real functions.
-
-## A. Two reconcilers from one body
-
-`createChildReconciler(shouldTrackSideEffects)` produces two functions from the same code:
-- **`mountChildFibers`** (`shouldTrackSideEffects = false`) handles initial mount. It skips deletion tracking.
-- **`reconcileChildFibers`** (`true`) handles updates. It tracks `Placement` and `ChildDeletion` flags
-  (Ch 04) that drive the commit's DOM ops.
-
-`reconcileChildFibersImpl` branches on the new child: single element
-(`$$typeof === REACT_ELEMENT_TYPE`) calls `reconcileSingleElement`; string/number calls text node; array calls
-`reconcileChildrenArray`; iterable calls the iterator variant.
-
-## B. Single element: the exact reuse rule
-
-`reconcileSingleElement` / `updateElement`: reuse the existing fiber **iff `key` matches AND
-`current.elementType === element.type`**. Then `useFiber(current, props)` (= `createWorkInProgress`,
-Ch 04). **State is preserved**. Otherwise `deleteChild` + create a fresh fiber with `Placement`, so **state is lost**. (Note the compared field is **`elementType`**, not `type`. They differ only for lazy components and dev hot-reload.) This is the Ch 06 "same type means reuse, different type means remount" rule at the line level.
-
-## C. List diff: the real two passes (`reconcileChildrenArray`)
-
-React deliberately does **no** two-ended diff. Source comment: *"This algorithm can't optimize by searching from both ends since we don't have backpointers on fibers."* Two passes:
+**List diff: two passes (`reconcileChildrenArray`).** React deliberately does no two-ended diff. Source comment: "This algorithm can't optimize by searching from both ends since we don't have backpointers on fibers."
 
 ```mermaid
 flowchart TD
   p1["Pass 1: walk old fibers & new children in lockstep (updateSlot)"] --> brk{key lines up?}
   brk -->|yes| reuse[reuse fiber, advance both] --> p1
-  brk -->|no, break| p2["Pass 2: mapRemainingChildren → Map keyed by key (or index if keyless)"]
+  brk -->|no, break| p2["Pass 2: mapRemainingChildren -> Map keyed by key (or index if keyless)"]
   p2 --> match["each remaining new child: updateFromMap (match anywhere by key)"]
-  match --> del["leftover map entries → deleteChild"]
+  match --> del["leftover map entries -> deleteChild"]
 ```
 
-1. **Pass 1** loops old + new in index lockstep. It calls **`updateSlot`**, which returns `null` the moment a key does not line up. This causes a `break`. (If new children run out, delete the rest. If old run out, fast-path insert via `createChild`.)
-2. **Pass 2** uses **`mapRemainingChildren`** to build a `Map` keyed by **`fiber.key`**, falling back to `fiber.index` when key is null. Then **`updateFromMap`** matches each remaining new child by `newChild.key ?? newIdx`. Leftover map entries are deleted.
+Pass 1 loops old + new in index lockstep. It calls `updateSlot`, which returns `null` the moment a key does not line up. This causes a `break`. Pass 2 uses `mapRemainingChildren` to build a `Map` keyed by `fiber.key`, falling back to `fiber.index` when key is null. Then `updateFromMap` matches each remaining new child by `newChild.key ?? newIdx`. Leftover map entries are deleted.
 
-**`placeChild(newFiber, lastPlacedIndex, newIndex)`** decides moves. If a matched fiber's old index is less than `lastPlacedIndex`, it marks `Placement` (a move). Otherwise it advances `lastPlacedIndex`.
+`placeChild(newFiber, lastPlacedIndex, newIndex)` decides moves. If a matched fiber's old index is less than `lastPlacedIndex`, it marks `Placement` (a move). Otherwise it advances `lastPlacedIndex`.
 
-## D. Why index keys corrupt state: the exact mechanism
+**Why index keys corrupt state: the exact mechanism.** Keyless (or index-keyed) children are stored under their index. `updateFromMap` looks up `newChild.key === null ? newIdx : newChild.key`. So index keys make React match by position. When you prepend, insert, or reorder, position N now holds a different logical item. But its key (the index) is unchanged. React reuses that position's fiber and hands it the new item. The old fiber's state and uncontrolled DOM (input text, focus, checkbox) attach to the wrong row.
 
-Keyless (or index-keyed) children are stored under their **index**. `updateFromMap` looks up `newChild.key === null ? newIdx : newChild.key`. So index keys make React match **by position**. When you prepend, insert, or reorder, position N now holds a *different logical item*. But its key (the index) is unchanged. React reuses that position's fiber and hands it the new item. The old fiber's **state and uncontrolled DOM (input text, focus, checkbox) attach to the wrong row**. A stable `key={item.id}` makes the Map match the item wherever it moved. This is exactly the Ch 06 prepend bug in source terms. (`key={Math.random()}` is the opposite failure: every key is new every render so every fiber is deleted and remade. All state is lost and perf is worst.)
+## Real World Example
 
-## Go deeper
-Source: `facebook/react` v19.2.0 `ReactChildFiber.js` (`reconcileChildrenArray`, `updateSlot`, `updateElement`, `mapRemainingChildren`, `placeChild`). Ch 04 is the Fiber substrate. Ch 08 covers list perf where keys matter most. React's *Preserving and Resetting State* doc is the prose pair.
+**Chat app with reordering messages.** You have a list of messages. Each message has a checkbox for selection. New messages arrive at the top with real-time updates.
+
+```jsx
+{messages.map((msg, i) => <MessageRow key={i} msg={msg} />)}
+```
+
+A new message arrives. It gets prepended. Keys 0,1,2 now point to different messages. Each `MessageRow` keeps its checkbox state from the previous message. The user sees the wrong messages selected.
+
+Fix: use `key={msg.id}`. Now each message keeps its Fiber regardless of position. New messages get fresh Fibers. Old messages keep their checkbox state.
+
+**Tab switcher with form state.** You toggle between two tabs that wrap content in different containers.
+
+```jsx
+{activeTab === "profile" ? <div><ProfileForm/></div> : <section><ProfileForm/></section>}
+```
+
+What happens internally: Switching tabs changes the wrapper from `div` to `section`. That is a type change at that position. React unmounts `ProfileForm` and remounts it fresh. The user's unsaved form data is lost.
+
+Fix: use the same wrapper element type for both tabs, or give `ProfileForm` a `key` tied to the tab so React treats each tab's form as separate.
+
+```jsx
+{activeTab === "profile"
+  ? <div><ProfileForm key="profile" /></div>
+  : <div><ProfileForm key="settings" /></div>
+}
+```
+
+Now each tab gets its own Fiber with independent state. The user can switch tabs without losing form data.
+
+## Tradeoffs
+
+**Index keys vs stable keys.** Index keys are cheaper to compute and require no data model changes. But they cause state bugs on reorder, insert, or delete. Stable keys (item.id) are the safe default. Only use index keys for static, read-only lists that never change order.
+
+**Random keys (`key={Math.random()}`).** This remounts every render. Every child is deleted and recreated. All state is lost. All effects re-run. Performance is worst possible. Never do this.
+
+**Type change vs key change.** Changing the wrapper type (div to section) remounts the entire subtree. Changing a child's key remounts only that child. Use key changes for targeted remounts. Use type changes when the entire subtree structure is different.
+
+**Reconciliation vs full rebuild.** Reconciliation is cheaper than full rebuild for most updates. But the comparison itself has a cost. For deeply nested trees with many siblings, key lookups and type checks add up. This is why list virtualization (Ch 08) matters: fewer Fibers to diff means less work.
+
+## Common Mistakes
+
+- **Index keys on dynamic or stateful lists.** State leaks to wrong rows.
+- **Using a random key (`key={Math.random()}`).** Remounts every render, destroys state and perf.
+- **Forgetting that a type change remounts.** You lose animation or input state when restructuring.
+- **Assuming React diffs against the DOM.** It diffs element tree against previous element tree.
+- **Thinking keys must be globally unique.** They only need to be unique among siblings.
+
+## SDE-2 Interview Answer (Mid-level + Senior + Engineering Lead variants)
+
+**Mid-level (SDE-1 / junior SDE-2):**
+
+Question: "Why does React need keys?"
+
+"Keys give list children stable identity. Without keys, React matches elements by position. When you reorder or insert items, position-based matching reuses the wrong Fiber. State and DOM attach to the wrong item. Keys tell React: 'this element is this item, wherever it moved.' The main purpose is correctness, not performance."
+
+**Senior (SDE-2 / SDE-3):**
+
+Question: "Changing a wrapper from div to section reset my form. Why?"
+
+"React compares element types at each position. A div and a section are different types. Different type means React unmounts the old subtree and mounts a fresh one. The form's Fiber is destroyed, so its state is lost. State lives on the Fiber at a position. The position was rebuilt. Fix: use the same wrapper type for both branches, or use a key on the form to separate its state intentionally."
+
+**Engineering Lead (Staff / Principal):**
+
+Question: "How would you design a list component that handles reordering, insertion, and deletion without losing state?"
+
+"First, use stable keys derived from item data (item.id or a composite key). Never use index keys. Second, ensure the data layer provides stable identifiers. If the API does not, generate IDs on the client on first load and persist them. Third, for complex lists with drag-and-drop reordering, use a library like `@dnd-kit` that manages key stability and DOM position. Fourth, educate the team on the type-change remount rule. When restructuring UI, keep wrapper types consistent to preserve child state. Use keys deliberately to reset state when needed, like `<Editor key={docId} />` to reset editor state per document."
+
+## Follow-up Questions (5, progressively harder)
+
+1. Walk through the prepend-with-index-key bug, Fiber by Fiber. Then fix it.
+   _(Tests ability to trace execution through reconciliation.)_
+
+2. Why is the general tree-diff O(n³) and what two assumptions make React's O(n)?
+   _(Tests understanding of why React's approach works.)_
+
+3. How would you intentionally force a subtree to reset its state?
+   _(Tests understanding of key as identity tool.)_
+
+4. Same-type vs different-type at a position: what happens to DOM, Fiber, state, and effects?
+   _(Tests comprehensive understanding of the reconciliation pipeline.)_
+
+5. Is `key` globally unique? What happens if keys collide among siblings?
+   _(Tests edge case understanding of the key mechanism.)_
+
+## Mental Trigger
+
+**Type change means remount. Key is identity. State lives on the Fiber at a position.**
+
+## One Page Revision
+
+- React diffs new element tree vs previous, per position, type-first. O(n) via two heuristics.
+- Same type means reuse Fiber, DOM, and state, then update props.
+- Different type means unmount subtree and remount. State and effects reset.
+- State lives on the Fiber at a position, not on your JSX variable.
+- `key` redefines identity in lists so reorders match by item, not by position.
+- Index keys cause state bugs on reorder, insert, or delete. Use stable item IDs.
+- Random keys (`Math.random()`) remount every render. Never use them.
+- Use a changing key deliberately (`key={docId}`) to force a reset.
+- The real reconciler uses two passes: lockstep then keyed map.
+- `reconcileSingleElement` checks `elementType` match plus `key` match. Both must line up.
+- `placeChild` determines moves by comparing old index to `lastPlacedIndex`.

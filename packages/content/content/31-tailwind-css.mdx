@@ -5,25 +5,19 @@ part: "Tooling & Workflow"
 description: "Design tokens, dark mode, responsive, cn(), shadcn/ui"
 ---
 
+## Problem
 
-> Prerequisites: CSS layout fundamentals (flexbox, grid, positioning), cascade and specificity (how conflicting CSS rules resolve. This is key to understanding Tailwind's utility conflict resolution with tailwind-merge), and design system concepts (design tokens, component libraries, and shadcn/ui's copy-paste model vs traditional npm dependencies).
-> The JD explicitly mentions TailwindCSS + shadcn/ui. Interviewer will ask about theming, dark
-> mode, and component extraction.
+CSS at scale is hard. Naming things is hard. Every component can invent its own spacing, colors, and type scale. Over time the UI drifts. The button blue on the settings page is `#3b82f6` but the button blue on the dashboard is `#3b83f7`. Design consistency breaks because there is no constraint system.
 
----
+## Why Existing Solution Failed
 
-## The one mental model
+BEM (Block Element Modifier) requires naming discipline that degrades as teams grow. CSS Modules scope styles but do not limit values. Styled-components gives infinite CSS power per component, which means every component invents its own design tokens. None of these solutions enforce a design system at the build level. They trust developers to stay consistent. Trust is not a design tool.
 
-> **Tailwind is a DESIGN TOKEN SYSTEM expressed as atomic CSS classes. Every utility is a**
-> **single CSS property-value pair. Instead of writing custom CSS that varies per component,**
-> **you compose utilities from a constrained set of design tokens (colors, spacing, type scale).**
-> **This enforces consistency by limiting the design space. You cannot invent an arbitrary**
-> **margin. You pick from `m-1` through `m-96`.**
+## Mental Model
 
-From "design tokens as classes" you derive: why Tailwind eliminates the "naming things" problem
-(class names become layout concerns, not styling concerns), why it works with component-based
-frameworks (each component encapsulates its styles), and why `tailwind-merge`/`clsx` are
-essential for component libraries.
+Tailwind is a DESIGN TOKEN SYSTEM expressed as atomic CSS classes. Every utility is a single CSS property-value pair. Instead of writing custom CSS that varies per component, you compose utilities from a constrained set of design tokens (colors, spacing, type scale). This enforces consistency by limiting the design space. You cannot invent an arbitrary margin. You pick from `m-1` through `m-96`.
+
+## Visualization
 
 ```mermaid
 flowchart TB
@@ -53,54 +47,59 @@ flowchart TB
   Runtime --> Component
 
   subgraph Output["Result"]
-    Consistent["✅ Consistent design<br/>across all components"]
-    Small["✅ Small CSS bundle<br/>purged unused styles"]
-    Theme["✅ Dark mode<br/>via class toggle"]
+    Consistent["Consistent design<br/>across all components"]
+    Small["Small CSS bundle<br/>purged unused styles"]
+    Theme["Dark mode<br/>via class toggle"]
   end
 
   Component --> Output
 ```
 
----
+## Engine Simulation
 
-## Learning Objectives
+When you write `className="bg-brand-500 text-white p-4 rounded-lg"`, here is what happens:
 
-1. Explain Tailwind's utility-first philosophy and how it differs from BEM/CSS Modules
-2. Configure `tailwind.config.js` with custom design tokens
-3. Implement dark mode (class strategy) and responsive design
-4. Use arbitrary values, `@apply`, and component extraction correctly
-5. Explain `clsx` and `tailwind-merge` and when to use each
-6. Explain shadcn/ui's approach: copy-paste components, not a dependency
+1. **Build time**: Tailwind's scanner reads your source file. It finds the complete string `bg-brand-500`. It checks `tailwind.config.js` for the `brand.500` color value.
+2. **CSS generation**: Tailwind generates only the CSS classes found in your scanned files. Unused classes are purged.
+3. **Class resolution**: The browser receives `bg-brand-500` and applies the corresponding CSS rule. Each utility maps to exactly one CSS declaration.
+4. **Conflict resolution**: If you also pass `className="bg-red-500"` from outside, `tailwind-merge` removes `bg-brand-500` and keeps only `bg-red-500`. Without twMerge, both classes apply and CSS cascade order determines the winner.
 
----
+```jsx
+// What you write
+<button className="bg-brand-500 text-white px-4 py-2 rounded-lg">
+  Save
+</button>
 
-## Key Mental Models
+// What the browser renders
+<button class="bg-brand-500 text-white px-4 py-2 rounded-lg">
+  Save
+</button>
 
-- **Constraint ≠ limitation.** A constrained color palette of 8 shades × 10 hues is more
-  consistent than infinite color freedom. Tailwind enforces constraint through its config.
-- **Composition over abstraction.** Instead of `.btn-primary { @apply bg-blue-500 text-white }`,
-  compose the utilities directly in JSX. Component extraction (creating a `<Button />`)
-  creates the abstraction boundary, not CSS classes.
-- **Build-time vs runtime.** Tailwind generates CSS at build time. Unused utilities are
-  purged via `content` paths. Zero runtime cost.
-- **Design tokens in config, not in JSX.** Colors, spacing, breakpoints, fonts go in
-  `tailwind.config.js`. JSX only references the token names (`bg-primary`, `text-sm`).
+// What CSS applies
+.bg-brand-500 { background-color: #3b82f6; }
+.text-white { color: #ffffff; }
+.px-4 { padding-left: 1rem; padding-right: 1rem; }
+.py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+.rounded-lg { border-radius: 0.5rem; }
+```
 
----
+Each utility is independent. None conflict because CSS shorthand properties (padding) only apply when their specific utility is present. The design token system ensures every `bg-brand-500` references the same color everywhere.
 
-## 1. Configuration: The Design Token Hub
+## Internal Implementation
 
-```javascript
-// tailwind.config.js
+### Configuration: The Design Token Hub
+
+`tailwind.config.js` is the single source of truth for design tokens. Colors, spacing, typography, breakpoints all live here.
+
+```js
 module.exports = {
   content: ['./src/**/*.{js,jsx,ts,tsx}'],
-  darkMode: 'class', // or 'media'. 'class' gives manual control
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
         brand: {
           50: '#eff6ff',
-          100: '#dbeafe',
           500: '#3b82f6',
           600: '#2563eb',
           700: '#1d4ed8',
@@ -110,98 +109,38 @@ module.exports = {
           secondary: 'var(--color-surface-secondary)',
         },
       },
-      spacing: {
-        '18': '4.5rem',
-        '88': '22rem',
-      },
-      fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-      },
-      animation: {
-        'fade-in': 'fadeIn 0.2s ease-in-out',
-      },
-      keyframes: {
-        fadeIn: {
-          '0%': { opacity: '0' },
-          '100%': { opacity: '1' },
-        },
-      },
+      spacing: { '18': '4.5rem', '88': '22rem' },
+      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
     },
   },
-  plugins: [],
 };
 ```
 
-### Interview answer (SDE-2)
+What happens internally: When you reference `bg-brand-500` in JSX, Tailwind maps it to the color `#3b82f6` from the config. Change the config value and every `bg-brand-500` across the app updates. This is the power of design tokens. The `content` array tells Tailwind which files to scan. Only classes found in these files survive in the production build.
 
-"tailwind.config.js is the single source of truth for design tokens. Colors, spacing,
-typography, breakpoints all live here. Components reference token names, not
-hardcoded values. This means changing the brand color updates every `bg-brand-500`
-across the entire app. For a white-label product like a product company, I would use CSS custom
-properties in the config (`var(--color-brand)`) so each client's theme is applied at
-the CSS layer without rebuilding Tailwind."
+### Dark Mode
 
----
-
-## 2. Dark Mode
-
-```javascript
+```js
 // tailwind.config.js
 darkMode: 'class', // toggle via JS
 ```
 
 ```jsx
-// Use
+// Usage
 <div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
 
 // Toggle
 document.documentElement.classList.toggle('dark');
 ```
 
-### Strategy: system preference vs manual toggle
+Two strategies: `darkMode: 'media'` respects `prefers-color-scheme: dark` with no manual toggle. `darkMode: 'class'` gives you full control. Persist the user's preference in localStorage.
 
-- `darkMode: 'media'` respects `prefers-color-scheme: dark`. No toggle possible.
-- `darkMode: 'class'` lets you control when dark class is applied. Persist in localStorage.
+### Responsive Design
 
-### Multi-theme (white-label)
-
-For a product company's white-label scenario, extend beyond dark/light:
-
-```css
-/* In your CSS */
-:root { --color-bg: #ffffff; --color-text: #1a1a2e; }
-[data-theme="dark"] { --color-bg: #1a1a2e; --color-text: #e2e8f0; }
-[data-theme="corporate"] { --color-bg: #f8fafc; --color-text: #0f172a; --color-primary: #2563eb; }
-```
-
-```javascript
-// tailwind.config.js
-theme: {
-  extend: {
-    colors: {
-      bg: 'var(--color-bg)',
-      text: 'var(--color-text)',
-      primary: 'var(--color-primary)',
-    },
-  },
-}
-```
-
-```jsx
-// Usage — automatically switches per theme
-<div className="bg-bg text-text">
-  <button className="bg-primary text-white">Save</button>
-</div>
-```
-
----
-
-## 3. Responsive Design
-
-Tailwind breakpoints (mobile-first):
+Tailwind breakpoints are mobile-first:
 
 | Prefix | Min width |
-|---|---|
+|--------|-----------|
 | `sm:` | 640px |
 | `md:` | 768px |
 | `lg:` | 1024px |
@@ -214,107 +153,13 @@ Tailwind breakpoints (mobile-first):
   <div className="w-full md:w-1/3">Sidebar</div>
   <div className="w-full md:w-2/3">Content</div>
 </div>
-
-// Responsive typography
-<h1 className="text-xl md:text-2xl lg:text-3xl font-bold">
 ```
 
-### Custom breakpoints
+What happens internally: The mobile layout (`flex-col`, `w-full`) is the base. The `md:flex-row` only applies when the viewport is 768px or wider. This matches the browser's natural behavior. Mobile styles are the default. Desktop is the enhancement.
 
-```javascript
-theme: {
-  extend: {
-    screens: {
-      'tablet': '768px',
-      'laptop': '1024px',
-      'desktop': '1280px',
-    },
-  },
-}
-```
+### cn() for Class Composition
 
----
-
-## 4. Arbitrary Values & `@apply`
-
-### Arbitrary values: escape hatch
-
-```jsx
-// When the design token doesn't exist
-<div className="w-[calc(100%-2rem)] top-[37px] text-[#123456]">
-```
-
-Use sparingly. Every arbitrary value is a design inconsistency risk. If you use a value more
-than twice, add it to the config.
-
-### @apply: anti-pattern in most cases
-
-```css
-.btn-primary {
-  @apply bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600;
-}
-```
-
-**Warning**: `@apply` recreates the exact problem Tailwind solves. Now you have CSS class
-names again. You lose the visibility of what styles are applied. Only use `@apply` for:
-
-- Third-party library overrides (can't change JSX)
-- Global base styles (`@layer base`)
-- CSS-only frameworks that can't use component extraction
-
-**Preferred**: Extract a React component instead.
-
-```jsx
-// YES — component extraction
-function ButtonPrimary({ children }) {
-  return <button className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
-    {children}
-  </button>;
-}
-
-// NO — @apply
-// .btn-primary { @apply bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600; }
-```
-
----
-
-## 5. clsx, tailwind-merge, cn()
-
-This is a common interview topic. How do you compose conditional classes in React?
-
-### clsx: conditional class joining
-
-```javascript
-import clsx from 'clsx';
-
-function Button({ variant = 'primary', size = 'md', disabled }) {
-  return (
-    <button className={clsx(
-      'btn-base',
-      variant === 'primary' && 'btn-primary',
-      variant === 'ghost' && 'btn-ghost',
-      size === 'lg' && 'px-6 py-3 text-lg',
-      disabled && 'opacity-50 cursor-not-allowed',
-    )}>
-      {children}
-    </button>
-  );
-}
-```
-
-### tailwind-merge: conflict resolution
-
-```javascript
-import { twMerge } from 'tailwind-merge';
-
-// Solves: "bg-red-500 bg-blue-600" → picks the LAST one (bg-blue-600)
-twMerge('bg-red-500', 'bg-blue-600');
-// → 'bg-blue-600' as expected, not both
-```
-
-### cn(): the shadcn convention
-
-```javascript
+```js
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -323,85 +168,52 @@ export function cn(...inputs) {
 }
 ```
 
-This is the standard pattern used by shadcn/ui. `clsx` handles conditionals, `twMerge`
-resolves conflicting Tailwind utilities so the last one wins.
-
-### Why not just template literals?
+What happens internally: `clsx` handles conditional class joining (arrays, objects, ternaries). `tailwind-merge` resolves conflicting Tailwind utilities so the last one wins. Without `twMerge`, passing `className="bg-red-500"` to a component that already has `bg-blue-600` results in both classes being applied. The stylesheet cascade order decides the winner, which is unpredictable.
 
 ```jsx
-// Dangerous — last class doesn't override
-className={`bg-red-500 ${isActive && 'bg-blue-600'}`}
-// → "bg-red-500 bg-blue-600" — both applied, red wins (CSS order)
+// Why cn() matters
+function Button({ variant = 'primary', className }) {
+  return (
+    <button className={cn(
+      'bg-blue-500 text-white',      // default
+      variant === 'ghost' && 'bg-transparent border',
+      className                       // consumer override
+    )}>
+      {children}
+    </button>
+  );
+}
+
+// Consumer usage
+<Button variant="ghost" className="bg-red-500" />
+// cn() resolves to: "bg-transparent border bg-red-500"
+// twMerge removes bg-transparent, keeps bg-red-500
 ```
 
-Template literals produce both classes, but CSS specificity doesn't help when both have the
-same specificity. The order in the stylesheet matters, not the order in the string. `twMerge`
-correctly solves this by keeping only the last conflicting utility.
+### shadcn/ui Architecture
 
----
-
-## 6. shadcn/ui Architecture
-
-shadcn/ui is NOT a component library you install from npm. It's a collection of components
-you COPY into your project. This is a fundamentally different model.
-
-### Why copy-paste?
-
-| npm dependency | shadcn/ui |
-|---|---|
-| Version locked to what you installed | You own every line. Modify freely |
-| Upgrading = breaking changes | No upgrade needed. You control changes |
-| Bundle includes everything | Only what you copy |
-| Hard to customize internals | Full source access, no black box |
-
-### Architecture pattern
+shadcn/ui is NOT a component library you install from npm. It is a collection of components you COPY into your project. Every line is yours to modify.
 
 ```
 components/ui/
-  button.tsx          ← $ npx shadcn add button
-  dialog.tsx          ← $ npx shadcn add dialog
-  table.tsx           ← $ npx shadcn add table
-  ...
+  button.tsx          ← copied by `npx shadcn add button`
+  dialog.tsx
+  table.tsx
 lib/
   utils.ts            ← cn() helper
 ```
 
-Each component uses:
-- `cn()` for class merging
-- `Radix UI` primitives for accessibility and behavior
-- `Tailwind` for styling
-- `forwardRef` + controlled pattern for form integration
-
-### shadcn/ui Button example (simplified)
-
 ```tsx
-import { forwardRef } from 'react';
-import { cn } from '@/lib/utils';
-
-const buttonVariants = {
-  variant: {
-    default: 'bg-primary text-primary-foreground hover:bg-primary/90',
-    destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
-    outline: 'border border-input bg-background hover:bg-accent',
-    ghost: 'hover:bg-accent hover:text-accent-foreground',
-  },
-  size: {
-    default: 'h-10 px-4 py-2',
-    sm: 'h-9 rounded-md px-3',
-    lg: 'h-11 rounded-md px-8',
-  },
-};
-
 const Button = forwardRef(({ className, variant = 'default', size = 'default', ...props }, ref) => {
   return (
     <button
       className={cn(
-        'inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium',
+        'inline-flex items-center justify-center rounded-md text-sm font-medium',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         'disabled:pointer-events-none disabled:opacity-50',
         buttonVariants.variant[variant],
         buttonVariants.size[size],
-        className  // Consumer overrides come last
+        className
       )}
       ref={ref}
       {...props}
@@ -410,126 +222,102 @@ const Button = forwardRef(({ className, variant = 'default', size = 'default', .
 });
 ```
 
----
+What happens internally: Each shadcn/ui component owns its default styles via the `cn()` call. Consumer `className` always comes last inside `cn()`, so consumer overrides win. The component uses Radix UI primitives for accessibility (roles, keyboard nav, focus management). Tailwind provides styling. You own every line because you copied the source. Version updates are manual diffs, not breaking npm upgrades.
 
-## 7. Performance Considerations
+## Real World Example
 
-### Purge unused styles
+### White-Label Theming
 
-```javascript
-content: ['./src/**/*.{js,jsx,ts,tsx}'],
-// Only classes found in these files survive in production build
+A SaaS product needs different brand colors per client. All components stay the same. Only colors change.
+
+```css
+/* Each client loads their own theme */
+[data-theme="acme-corp"] {
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+}
+[data-theme="megacorp"] {
+  --color-primary: #dc2626;
+  --color-primary-hover: #b91c1c;
+}
 ```
 
-### Dynamic classes: WARNING
-
-```jsx
-// ❌ Tailwind can't tree-shake this — "text-" is a string fragment
-<div className={`text-${color}-500`}>
-
-// ✅ Full class names are detectable
-<div className={color === 'red' ? 'text-red-500' : 'text-blue-500'}>
-```
-
-Tailwind scans source files for complete class name strings. Dynamic construction (`text-${color}`)
-is invisible to the scanner and won't be included in the build.
-
-### Class order optimization
-
-Tailwind automatically sorts classes in production with the official Prettier plugin.
-Install it: `@tailwindcss/typography` and `prettier-plugin-tailwindcss`.
-
----
-
-## 8. Design System Integration
-
-### Tailwind as design system foundation
-
-```
-tailwind.config.js  ← Tokens (colors, spacing, fonts, breakpoints)
-components/ui/      ← Primitives (Button, Input, Select, Dialog)
-features/           ← Page/feature components compose primitives
-```
-
-Token change in config → propagates to every component → auto-updates the whole app.
-
-### CSS custom properties bridge
-
-Use `var()` in the config for runtime-switchable themes (white-label):
-
-```javascript
+```js
+// tailwind.config.js
 colors: {
   primary: {
     DEFAULT: 'var(--color-primary)',
     hover: 'var(--color-primary-hover)',
-    muted: 'var(--color-primary-muted)',
   },
 }
 ```
 
-Each client gets `:root { --color-primary: #3b82f6; }`. No rebuild needed.
+```jsx
+// Components stay the same across clients
+<button className="bg-primary text-white">Save</button>
+```
 
----
+What happens internally: The CSS custom property `--color-primary` resolves at runtime based on the `data-theme` attribute on a parent element. Tailwind generates `bg-primary` as `background-color: var(--color-primary)`. No rebuild needed for new clients. The same `<button>` component renders different colors per client without any code changes.
 
-## Interview Questions & SDE-2 Answers
+## Tradeoffs
 
-### Q: Why Tailwind over styled-components / CSS Modules?
+| Decision | Gain | Cost |
+|----------|------|------|
+| Utility-first | No naming, consistent spacing | Ugly JSX for complex components |
+| Build-time CSS generation | Zero runtime cost | Cannot use dynamic class strings |
+| Design token config | Single source of truth | Learning curve for custom values |
+| Copy-paste components (shadcn) | Full ownership | Manual updates |
+| JIT engine | Small CSS bundles | Slower initial build |
 
-"The key difference is constraint. Styled-components gives you infinite CSS power per
-component. This means every component can invent its own spacing, colors, and type scale.
-Over time, the UI drifts. Tailwind keeps you inside a design token system enforced at the
-build level. Combined with component encapsulation in React, you get the best of both:
-per-component styling choices that cannot break the global design system."
-
-### Q: How do you handle responsive design in Tailwind?
-
-"Mobile-first with breakpoint prefixes. I build the mobile layout first (no prefix), then
-add `sm:`, `md:`, `lg:` overrides. This matches the browser's natural behavior. Mobile
-styles are the base. Desktop is the enhancement. The rare case is a desktop-only component
-where I need a mobile override. That is `max-md:hidden` for hiding on mobile."
-
-### Q: What is `cn()` and why does shadcn use it?
-
-"cn is clsx + tailwind-merge. clsx handles conditional class joining (arrays, objects,
-ternaries). tailwind-merge resolves conflicting Tailwind utilities. If a consumer passes
-`className="bg-red-500"` and the component internally has `bg-blue-600`, twMerge keeps the
-consumer's class. Without it, both classes would apply, and the CSS cascade order would
-decide the winner. That behavior is unpredictable across build outputs."
-
-### Q: How would you handle white-label theming in Tailwind?
-
-"I would use CSS custom properties in tailwind.config.js: `colors: { brand: 'var(--color-brand)' }`.
-Each client loads a stylesheet that sets `--color-brand`, `--color-surface`, etc. on `:root`.
-Tailwind generates classes for `var()` references. No rebuild needed for new clients.
-The component code stays the same across clients. Only the CSS custom properties change."
-
----
+The constraint system prevents design drift but requires learning the token names. The tradeoff is worth it for teams of 3 or more developers.
 
 ## Common Mistakes
 
-| Mistake | Why |
-|---|---|
-| Using `@apply` everywhere | Recreates the naming/abstraction problem Tailwind solves |
-| Dynamic class strings (`text-${color}-500`) | Broken in production (purged) |
-| Not using `cn()` for component props | Consumer `className` overrides don't work correctly |
-| Abusing arbitrary values | Bypasses design token system → visual drift |
-| Mixing BEM + Tailwind | Inconsistent mental model; pick one system |
-| No Prettier plugin | Class order is arbitrary → diff noise in PRs |
+- **Using `@apply` everywhere**: Recreates the naming and abstraction problem Tailwind solves. Extract a React component instead.
+- **Dynamic class strings** (`text-${color}-500`): Broken in production because Tailwind scans for complete strings, not fragments. Use full class names.
+- **Not using `cn()` for component props**: Consumer `className` overrides do not work correctly without twMerge.
+- **Abusing arbitrary values** (`w-[calc(100%-2rem)]`): Bypasses the design token system and causes visual drift. If you use a value more than twice, add it to the config.
+- **Mixing BEM and Tailwind**: Two mental models conflict. Pick one system.
+- **No Prettier plugin**: Class order is arbitrary. Causes diff noise in PRs.
 
----
+## SDE-2 Interview Answer
 
-## Summary
+### Mid-level
 
-> **Tailwind = design token system as atomic CSS. Config is the source of truth.**
-> **Components extract at the React level, not the CSS level. `cn()` composes classes**
-> **correctly. Dark mode via class toggle. White-label via CSS custom properties in config.**
+"Tailwind is a design token system as CSS classes. The config is the single source of truth. I compose utilities in JSX instead of writing custom CSS. I use cn() for conditional classes and tailwind-merge for conflict resolution. I avoid @apply because it recreates the naming problem. I use dark mode with the class strategy for manual control."
 
----
+### Senior
 
-## Homework
+"I configure Tailwind as the design system foundation. Colors, spacing, and typography tokens in the config propagate to every component. I use CSS custom properties for runtime-switchable themes, so white-label clients get different colors without a rebuild. I enforce a rule: no arbitrary values that appear more than twice. Those become config tokens. I review PRs for dynamic class strings that will break after purging."
 
-1. Configure a tailwind.config with a custom color palette, font family, and animation
-2. Build a responsive card grid: 1 col mobile, 2 col tablet, 3 col desktop
-3. Extract a reusable `Badge` component using `cn()` with variant and size props
-4. Implement dark mode toggle (class strategy) with localStorage persistence
-5. Set up shadcn/ui in a new Vite project and customize one component's default styles
+### Engineering Lead
+
+"Tailwind solves the design consistency problem at the tooling level. Instead of teaching every developer to follow design rules, the tool enforces the rules. I set up the config with the design team's tokens. I establish conventions: cn() for all components, extract React components instead of CSS classes, use the Prettier plugin for class ordering. The team moves faster because they spend zero time on CSS naming."
+
+## Follow-up Questions
+
+1. How would you add a new breakpoint for ultra-wide screens (1920px+) without breaking existing responsive styles?
+2. A component needs to override a parent component's utility class (e.g., parent sets `bg-red-500`, child needs `bg-blue-500`). How does cn() handle this?
+3. How would you implement print stylesheets with Tailwind? Print is a media query, not a class prefix.
+4. What happens to Tailwind classes in a server-side rendered app? How does the CSS get loaded on the server?
+5. Your design system has 30+ colors, each with 10 shades. The CSS bundle is too large. How do you reduce it without losing tokens?
+
+## Mental Trigger
+
+"Design tokens as classes."
+
+## One Page Revision
+
+- Tailwind = design token system as atomic CSS. Config is source of truth.
+- Utility-first: compose small CSS classes instead of writing custom CSS.
+- No naming problems. No CSS files per component.
+- Build-time scanning generates only used CSS. Zero runtime cost.
+- cn() = clsx + tailwind-merge. Use it in every component.
+- Dark mode via class strategy for manual toggle control.
+- Responsive via prefix: `md:flex`, `lg:w-1/2`. Mobile-first.
+- shadcn/ui copies components into your repo. You own every line.
+- White-label theming: CSS custom properties in config.
+- Common mistakes: @apply, dynamic class strings, no cn(), arbitrary values.
+- Prettier plugin required for class ordering.
+- Interview variants: Mid-level uses utilities. Senior enforces tokens. Lead designs the system.
+- Trigger: "Design tokens as classes."

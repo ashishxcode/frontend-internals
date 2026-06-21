@@ -5,62 +5,55 @@ part: "Tooling & Workflow"
 description: "Cursor, Claude Code, prompt engineering, verification"
 ---
 
+## Problem
 
-> Prerequisites: React component architecture (types, props, hooks, state patterns), testing practices (unit tests, integration tests, coverage analysis), and web security awareness (XSS, CSRF, authentication, authorization, injection). These are the areas where AI output most often introduces subtle bugs that reviewers must catch.
-> The JD explicitly mentions "extensive use of AI coding agents
-> (Claude Code, Cursor) to accelerate development while maintaining quality." Interviewer will
-> ask how you use AI and how you verify its output.
+AI coding tools generate code fast. They also generate wrong code, insecure code, and code that does not match your patterns. Without a structured workflow, AI output creates more bugs than it fixes. You waste time reviewing bad output. Worse, you ship bad output to production.
 
----
+## Why Existing Solution Failed
 
-## The one mental model
+Developers treat AI as a replacement for thinking. They give vague prompts ("Create a table component"), accept the output without review, and commit it. AI does not understand your codebase conventions, security requirements, or edge cases. It writes code that works for the happy path but breaks on error states, accessibility, and race conditions. The industry learned this the hard way: AI-generated code introduced security vulnerabilities, infinite re-render loops, and inaccessible UIs into production apps.
 
-> **AI is a force multiplier for IMPLEMENTATION, not a replacement for THINKING. The**
-> **architectural decisions, tradeoff analysis, edge-case reasoning, and quality review**
-> **must come from you. AI writes the boilerplate, generates variations, finds patterns,**
-> **and speeds up iteration. But you own the correctness, performance, accessibility,**
-> **and security of every line it produces.**
+## Mental Model
 
-From "you own every line" you learn: never accept AI output without review. Always test
-AI-generated code the same way you test hand-written code. Use AI for what it is good at
-(tedious patterns, test generation, documentation, boilerplate). Avoid using it for what
-it is bad at (novel architecture, security-sensitive code, precise business logic).
+AI is a force multiplier for IMPLEMENTATION, not a replacement for THINKING. The architectural decisions, tradeoff analysis, edge-case reasoning, and quality review must come from you. AI writes boilerplate, generates variations, finds patterns, and speeds up iteration. But you own the correctness, performance, accessibility, and security of every line it produces.
+
+## Visualization
 
 ```mermaid
 flowchart LR
   subgraph Plan["You Plan"]
-    A1["🧠 Define architecture"]
-    A2["📋 Write types & interfaces"]
-    A3["🔧 Design component tree"]
-    A4["🗺️ Map data flow"]
+    A1["Define architecture"]
+    A2["Write types & interfaces"]
+    A3["Design component tree"]
+    A4["Map data flow"]
   end
 
   subgraph AI["AI Generates"]
-    B1["🤖 Boilerplate components"]
-    B2["📝 Tests"]
-    B3["🔄 Refactoring patterns"]
-    B4["📄 Documentation"]
+    B1["Boilerplate components"]
+    B2["Tests"]
+    B3["Refactoring patterns"]
+    B4["Documentation"]
   end
 
   subgraph Review["You Review"]
-    C1["👁️ Correctness check"]
-    C2["🔒 Security audit"]
-    C3["♿ Accessibility review"]
-    C4["⚡ Performance profile"]
-    C5["🧪 Run tests"]
+    C1["Correctness check"]
+    C2["Security audit"]
+    C3["Accessibility review"]
+    C4["Performance profile"]
+    C5["Run tests"]
   end
 
   subgraph Ship["You Ship"]
-    D1["📦 TypeScript check"]
-    D2["🔍 Lint"]
-    D3["✅ Merge"]
-    D4["🚀 Deploy"]
+    D1["TypeScript check"]
+    D2["Lint"]
+    D3["Merge"]
+    D4["Deploy"]
   end
 
   Plan --> AI
   AI --> Review
-  Review -->|"❌ issues found"| AI
-  Review -->|"✅ approved"| Ship
+  Review -->|"issues found"| AI
+  Review -->|"approved"| Ship
 
   style Plan fill:#dbeafe,stroke:#3b82f6
   style AI fill:#fef3c7,stroke:#f59e0b
@@ -68,74 +61,35 @@ flowchart LR
   style Ship fill:#f1f5f9,stroke:#64748b
 ```
 
----
+## Engine Simulation
 
-## Learning Objectives
+When you give AI a prompt like "Create a ContactTable component with TanStack Query, sort, select, and loading/empty/error states", here is what happens internally:
 
-1. Explain your AI coding workflow interview-ready
-2. Write effective prompts for Claude Code, Cursor, and Copilot
-3. Define verification patterns: when to trust AI and when to verify
-4. Handle AI limitations: hallucinations, stale knowledge, context limits
-5. Integrate AI into your development loop without losing ownership
+1. **Token processing**: The prompt is tokenized and fed into the LLM.
+2. **Pattern matching**: The AI matches tokens against its training data. It recognizes "ContactTable" as a React component pattern, "TanStack Query" as a data fetching library, "sort" and "select" as table interaction patterns, and "loading/empty/error states" as React state patterns.
+3. **Code generation**: The AI generates code token by token, predicting the most likely next token based on its training. It creates the component structure, imports, hooks, and JSX.
+4. **Context window**: The AI uses your prompt plus its training as context. It does not know your specific codebase unless you provide types, import paths, and conventions in the prompt.
+5. **Hallucination risk**: If the AI does not have enough context, it invents conventions, imports, or APIs that do not exist in your codebase.
 
----
+## Internal Implementation
 
-## Key Mental Models
+### Prompt Anatomy
 
-- **AI generates the first draft.** You review, refactor, test, and approve. Never ship
-  unverified AI output to production.
-- **Good prompts are specific, structured, and include context.** The quality of output is
-  bounded by the quality of input.
-- **AI knows APIs but not your codebase.** You must provide the relevant types, conventions,
-  and existing patterns. Otherwise AI will invent them.
-- **Verification is non-negotiable for:** auth, payments, data mutations, security, a11y,
-  and anything involving user data.
-
----
-
-## 1. Interview Answer: "How do you use AI coding tools?"
-
-### SDE-2 answer (30 seconds)
-
-"My workflow is: I make the architecture decision first: file structure, component tree,
-data flow, state ownership. Then I write the types, interfaces, and function signatures.
-Only then do I use AI to generate the code body. I review every line AI produces
-before committing. I check: does this match our patterns, does it handle
-special cases, is it accessible, does it have the right loading and error states. I never use AI for
-security decisions, auth logic, or data mutation logic. I write and review those myself."
-
-### SDE-2 answer, expanded (2 minutes)
-
-"AI coding tools are the most impactful productivity gain since the linter. I use them in
-three modes:
-
-**Mode 1: Boilerplate generation.** When I need a TanStack Query hook, a React component with
-loading, error, and data states, or a form with validation, I write the type signature and let AI
-fill in the code. For example: 'Generate a useQuery hook for fetching contacts with
-search, pagination, and error handling.' I review the output, adjust for our conventions,
-and move fast.
-
-**Mode 2: Refactoring and patterns.** When I need to convert a useState pattern to useReducer,
-add memoization, or extract a custom hook, AI does the mechanical work. I verify
-the logic is preserved.
-
-**Mode 3: Test generation.** AI is excellent at writing unit tests once the component exists.
-Given a component's props and expected behavior, it generates the test cases. I review for
-coverage gaps.
-
-I have strict rules: AI never writes auth logic, never writes data mutation without review,
-never writes security-sensitive code. I always verify the output with TypeScript strict mode,
-linting, and the React DevTools profiler before committing."
-
----
-
-## 2. Prompt Engineering Patterns
-
-### Good prompts: specific and structured
+A good prompt has five parts:
 
 ```text
-Create a React component `<ContactTable>` that:
-- Takes `contacts: Contact[]`, `onSelect: (id: string) => void`, `loading: boolean`
+Role: "You are a senior React engineer..."
+Context: "We use React 19, shadcn/ui, TanStack Query, Tailwind, Zustand"
+Task: "Create a SearchableSelect component that supports keyboard nav, controlled/uncontrolled, async search"
+Constraints: "Must be accessible, support keyboard nav, handle loading/empty/error states"
+Output format: "Return the component + usage example + edge cases handled"
+```
+
+### Good Prompt Example
+
+```text
+Create a React component <ContactTable> that:
+- Takes contacts: Contact[], onSelect: (id: string) => void, loading: boolean
 - Uses TanStack Query for server state
 - Renders columns: Name, Email, Phone, Status, Actions
 - Supports sort by column (client-side)
@@ -148,18 +102,12 @@ Create a React component `<ContactTable>` that:
 Types:
 interface Contact { id: string; name: string; email: string; phone: string; status: string; }
 
-Convention: use `@/components/ui/table`, `@/lib/utils`
+Convention: use @/components/ui/table, @/lib/utils
 ```
 
-Why this works: AI knows:
-- The exact interface
-- The expected states (loading, empty, error)
-- The design system (shadcn/ui)
-- The import paths
-- The keyboard behavior
-- The column config pattern
+What happens internally: The AI receives the types, expected states, design system, import paths, keyboard behavior, and column config pattern. Every piece of context reduces hallucination risk. Without types, the AI invents them. Without states, the AI generates only the happy path. Without import paths, the AI guesses wrong.
 
-### Bad prompts
+### Bad Prompt Example
 
 ```text
 // Too vague
@@ -172,48 +120,14 @@ Why this works: AI knows:
 "Add sorting to the table"
 ```
 
-### Prompt anatomy
+What happens internally: The AI has no context about the project. It invents types, guesses the design system, assumes the happy path only, and uses random import paths. The output needs major rework.
 
-```
-Role: "You are a senior React engineer..."
-Context: "We use React 19, shadcn/ui, TanStack Query, Tailwind, Zustand"
-Task: "Create a SearchableSelect component that..."
-Constraints: "Must be accessible, support keyboard nav, controlled + uncontrolled, async search"
-Examples: "Here's how we write Button: [code snippet]"
-Output format: "Return the component + usage example + edge cases handled"
-```
+### CLAUDE.md Pattern
 
----
-
-## 3. Claude Code Specific
-
-### Workflow
-
-```bash
-# 1. Load project context
-claude # in project root — auto-reads CLAUDE.md, tsconfig, package.json
-
-# 2. Describe the task
-# "Add a NotificationBell component that polls /api/notifications every 30s,
-#  shows unread count badge, and opens a dropdown with the last 10 notifications"
-
-# 3. Review the output
-# Claude generates: component, types, hook, stories, tests
-
-# 4. Iterate
-# "Add click-outside-close to the dropdown"
-# "Add aria-label and role attributes"
-# "Extract the polling logic into usePolling hook"
-
-# 5. Commit
-git add -A && git commit
-# Claude writes the commit message
-```
-
-### CLAUDE.md pattern
+A CLAUDE.md file gives the AI project context every time it runs.
 
 ```markdown
-# CLAUDE.md — Project context for Claude Code
+# CLAUDE.md - Project context for Claude Code
 
 ## Stack
 - React 19, Vite, TypeScript strict mode
@@ -231,26 +145,13 @@ git add -A && git commit
 - Use cn() from @/lib/utils for className merging
 - Every data component needs: loading, empty, error, success states
 - Tests: vitest + @testing-library/react
-
-## Patterns
-- Controlled + uncontrolled via useControllableState hook
-- TanStack Query: useQuery with enabled option, staleTime 30s
-- Forms: react-hook-form + zod resolver
-- Error boundaries at route level
 ```
 
----
+What happens internally: The AI reads this file at startup. Every subsequent prompt uses these conventions as context. Outputs match your codebase patterns on the first try instead of inventing conventions.
 
-## 4. Cursor Specific
+### Cursor Specific
 
-### Tab completion
-
-Cursor's tab completes inline. It works best for:
-- Completing the next few tokens of a well-known pattern
-- Generating repetitive code (for example, mapping over an array with a consistent structure)
-- Writing test cases based on the test file's existing pattern
-
-### Chat + Composer
+Cursor's tab completion works best for completing well-known patterns, generating repetitive code, and writing test cases based on existing patterns. The `@` references let you scope the AI to specific files, docs, or terminal output.
 
 ```text
 @docs react-query Add optimistic update to the useDeleteContact mutation.
@@ -258,167 +159,107 @@ Cursor's tab completes inline. It works best for:
 @terminal Fix the TypeScript error in ContactTable.tsx
 ```
 
-Key feature: `@` references let you scope the AI to specific files, docs, or terminal output.
+## Real World Example
 
-### Cursor rules (similar to CLAUDE.md)
-
-`.cursorrules` in project root. Same content pattern as CLAUDE.md.
-
----
-
-## 5. Verification Patterns
-
-### Always verify
-
-| Category | Verify |
-|---|---|
-| Auth/permissions | Never use AI output. Write manually |
-| Data mutations | Review for correctness, rollback, error handling |
-| Financial calculations | Unit test every path |
-| Accessibility | Run axe DevTools, keyboard test manually |
-| Security (XSS, CSRF) | Review for sanitization, proper headers |
-| Race conditions | Review async flows, AbortController usage |
-| Bundle impact | Check imports don't accidentally include large deps |
-
-### Verification workflow
+### Building a Feature with AI
 
 ```text
-AI generates → TypeScript checks → Lint → Review (you) → Test → Ship
-     |              |             |         |        |       |
-     v              v             v         v        v       v
-  output      tsc --noEmit    eslint    manual    vitest    merged
-                                      review
+Step 1 (YOU):    Define component tree, data flow, types
+Step 2 (AI):     Generate component boilerplate
+Step 3 (YOU):    Review and adjust for patterns
+Step 4 (AI):     Generate TanStack Query hooks
+Step 5 (YOU):    Verify query keys, caching, invalidation
+Step 6 (AI):     Generate unit tests
+Step 7 (YOU):    Review test coverage, add missed cases
+Step 8 (YOU):    Run TypeScript, lint, tests, manual QA
 ```
 
-### Review checklist for AI code
+What happens internally: You own the architecture (steps 1, 3, 5, 7, 8). AI generates the implementation (steps 2, 4, 6). The division of labor is clear: AI handles mechanical work, you handle decisions and verification.
 
-1. **Does it match our patterns?** Or did AI invent a new convention?
-2. **Are all states handled?** Loading, empty, error, success, special cases.
-3. **Are there unused imports or variables?** AI often generates speculative code.
-4. **Is the component accessible?** Check roles, aria attributes, keyboard nav.
-5. **Are there performance issues?** Unnecessary re-renders, missing keys, large deps.
-6. **Does it handle errors well?** Error boundaries, retry, user feedback.
-7. **Are there security issues?** XSS in dangerouslySetInnerHTML, injection in URLs.
-
----
-
-## 6. When NOT to use AI
-
-### Scenarios where AI is dangerous
+### Debugging with AI
 
 ```text
-❌ Writing authentication logic
-❌ Writing permission/authorization checks
-❌ Writing SQL queries with user input (SQL injection risk)
-❌ Writing payment/ billing logic
-❌ Writing data sanitization (XSS, CSRF)
-❌ Writing crypto/token handling
-❌ Writing complex business rules you don't fully understand
-❌ Writing API routes without reviewing the security implications
-```
-
-### Scenarios where AI is wasteful
-
-```text
-❌ Designing system architecture
-❌ Making framework/library choices
-❌ Debugging a race condition you haven't isolated manually
-❌ Refactoring when you don't have tests to verify correctness
-❌ Writing code in a language/framework you can't review
-```
-
----
-
-## 7. Real-World Workflow Examples
-
-### Example 1: Building a feature with AI
-
-```text
-Step 1 (YOU):          Define component tree, data flow, types
-Step 2 (AI):           Generate component boilerplate
-Step 3 (YOU):          Review and adjust for patterns
-Step 4 (AI):           Generate TanStack Query hooks
-Step 5 (YOU):          Verify query keys, caching, invalidation
-Step 6 (AI):           Generate unit tests
-Step 7 (YOU):          Review test coverage, add missed cases
-Step 8 (YOU):          Run TypeScript, lint, tests, manual QA
-```
-
-### Example 2: Debugging with AI
-
-```text
-YOU: "Component keeps re-rendering. Here's the profiler flamegraph [attach]."
-AI:  "The `<ContactRow>` inside `<Table>` is re-rendering because
-      `columns` array is recreated every render. Use `useMemo` or
-      hoist it outside the component."
+YOU: "Component keeps re-rendering. Here is the profiler flamegraph."
+AI:  "The ContactRow inside Table re-renders because columns array is
+      recreated every render. Use useMemo or hoist it outside."
 YOU: "Good catch. Verifying the fix with profiler now."
 ```
 
-Note: THE AI IDENTIFIED THE ISSUE. YOU CONFIRMED WITH THE PROFILER. This is the right
-division of labor.
+What happened internally: AI identified the issue. YOU confirmed with the profiler. This is the correct division of labor. AI suggests patterns. You verify with tools.
 
-### Example 3: Refactoring with AI
+### Refactoring with AI
 
 ```text
-YOU: "Convert this component from useState to useReducer. Refactor the
-      autocomplete logic into a custom useAutocomplete hook. Preserve all
-      edge cases: debounce, abort, keyboard nav, click-outside. Here's the
-      existing code: [paste]"
+YOU: "Convert this component from useState to useReducer. Extract the
+      autocomplete logic into a useAutocomplete hook. Preserve all edge
+      cases: debounce, abort, keyboard nav, click-outside."
 AI:  [generates refactored code]
 YOU: [reviews: all edge cases preserved? types correct? patterns match?]
-YOU: [runs existing tests — green]
-YOU: [runs manual test — works]
+YOU: [runs existing tests - green]
+YOU: [runs manual test - works]
 YOU: COMMIT
 ```
 
----
+What happened internally: You defined the refactoring target and the edge cases to preserve. AI performed the mechanical transformation. You verified correctness with tests and manual testing.
 
-## 8. Interview Questions: SDE-2 Answers
+## Tradeoffs
 
-### Q: How do you ensure AI-generated code is correct?
+| Decision | Gain | Cost |
+|----------|------|------|
+| AI for boilerplate | 2-5x faster implementation | Must review every line |
+| AI for tests | Covers standard cases | Misses edge cases |
+| AI for refactoring | Mechanical work automated | Must verify logic preserved |
+| AI for auth/payments | Not worth risk | Manual only |
+| Specific prompts | Accurate output | More time writing prompts |
 
-"I never ship AI code unreviewed. My review covers: does it match our patterns, are all
-states handled (loading, empty, error, data), are there security issues (XSS, injection), is
-it accessible (keyboard, screen reader), and does it pass TypeScript strict mode. I also
-write tests for any non-trivial AI-generated logic. The AI is my pair programmer who writes
-the first draft. I am the senior who reviews and approves."
+The tradeoff is clear: AI saves time on mechanical work but requires senior-level review. The more specific your prompt, the less time you spend fixing bad output.
 
-### Q: What's a time AI helped you a lot?
+## Common Mistakes
 
-"When I needed to migrate a component from class-based to hooks-based React. The AI
-understood the lifecycle mapping and generated the equivalent useEffect/useState pattern
-for every lifecycle method. I saved hours of mechanical conversion work. But I still
-reviewed every hook for correctness and added cleanup functions the AI missed."
+- **No review**: Shipping AI code without review. AI does not understand your codebase context.
+- **Vague prompts**: "Create a form" produces generic output that misses validation, error states, accessibility.
+- **AI for auth and security**: AI does not understand authentication, authorization, or XSS prevention. It generates `dangerouslySetInnerHTML` without thinking.
+- **No verification checklist**: Missing states, performance issues, accessibility bugs slip through.
+- **Accepting AI conventions**: AI invents patterns that do not match your codebase. You must enforce conventions via CLAUDE.md.
+- **Not providing types**: AI invents types that do not match your data model.
 
-### Q: What's a time AI gave you wrong code?
+## SDE-2 Interview Answer
 
-"AI generated a `dangerouslySetInnerHTML` usage for rendering user-generated content.
-It was a security risk. I caught it in review and replaced it with proper React rendering.
-This is why I never trust AI output. It does not understand the security impact of
-what it generates."
+### Mid-level
 
-### Q: How do you prompt AI effectively?
+"My AI workflow is: I make architecture decisions first. File structure, component tree, data flow, state ownership. Then I write types, interfaces, and function signatures. Then I use AI to generate the code body. I review every line before committing. I check: does this match our patterns, does it handle edge cases, is it accessible, does it have loading and error states. I never use AI for security decisions, auth logic, or data mutation logic."
 
-"I give AI the same context I'd give a junior engineer: the types, the design system
-components to use, the edge cases to handle, the patterns to follow. I say: 'Create a
-SearchableSelect that uses shadcn/ui Popover + Command, supports keyboard nav, debounced
-async search with abort, and shows loading/empty/error states.' The more specific I am,
-the less AI hallucinates."
+### Senior
 
----
+"I use AI as a pair programmer. I write the types and interfaces. AI fills in the body. I review for correctness, security, accessibility, and performance. I maintain a CLAUDE.md file that defines stack, conventions, and patterns so AI output matches our codebase. I enforce a verification checklist: TypeScript strict mode, lint, tests, manual QA. AI writes the first draft. I review and approve."
 
-## Summary
+### Engineering Lead
 
-> **AI generates. You decide. You own every line. The best AI workflow is: define architecture**
-> **and types first → AI implements → you review for correctness, a11y, perf, security →**
-> **test → ship. Never use AI for decisions you can't verify.**
+"I set AI coding standards for the team. I maintain the CLAUDE.md, review prompts for junior engineers, and enforce the verification workflow. I classify tasks into three buckets: AI-suitable (boilerplate, tests, refactoring), AI-assisted (component generation with review), and AI-excluded (auth, payments, security, complex business logic). I measure AI impact by velocity improvement, not by output volume."
 
----
+## Follow-up Questions
 
-## Homework
+1. What specific edge cases does AI typically miss in generated React components? How do you catch them?
+2. A junior engineer on your team ships AI-generated code that causes a production bug. How do you prevent this from happening again?
+3. You need to migrate a large codebase from class components to hooks. AI offers to do it. What do you check before approving the migration?
+4. Design a verification workflow for AI-generated code. What are the minimum checks before merge?
+5. How do you handle AI context limits when generating a large feature with multiple files?
 
-1. Write a CLAUDE.md for this repo with stack, conventions, and patterns
-2. Practice writing a detailed prompt for: "Add virtual scrolling to a ContactList component"
-3. Review an AI-generated component for: missing states, a11y issues, perf problems
-4. Create a `.cursorrules` file for a React + Vite + Tailwind project
-5. Practice the interview answer: "Walk me through your AI coding workflow"
+## Mental Trigger
+
+"You own every line."
+
+## One Page Revision
+
+- AI is force multiplier for implementation, not replacement for thinking.
+- You own correctness, performance, accessibility, security of every line.
+- Good prompt = Role + Context + Task + Constraints + Output format.
+- Bad prompt = vague, no types, no constraints.
+- CLAUDE.md gives AI project context. Conventions, stack, patterns.
+- Workflow: You plan types/architecture. AI generates. You review. Test. Ship.
+- Never use AI for: auth, payments, security, complex business logic.
+- Always verify: TypeScript strict, lint, tests, manual review, accessibility.
+- Three modes: Boilerplate generation, Refactoring, Test generation.
+- Common mistakes: no review, vague prompts, AI for auth, no CLAUDE.md.
+- Interview: Mid-level uses AI with review. Senior maintains context files. Lead sets team standards.
+- Trigger: "You own every line."

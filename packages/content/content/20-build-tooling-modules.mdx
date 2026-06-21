@@ -10,60 +10,35 @@ description: "Vite, Webpack, ESM vs CJS, tree-shaking, code-splitting"
 
 ---
 
-## The one mental model
+## Problem
 
-> **A bundler is a GRAPH OPTIMIZER. It starts at your entry file. It follows every `import` to build
-> a dependency graph of modules. Then it emits the smallest, fastest set of files the browser can
-> load. It has two jobs. One: RESOLVE and COMBINE modules so the browser makes few requests.
-> Two: SHIP LESS. Drop unused code (tree-shaking). Split rarely-used code into separate chunks
-> (code-splitting). Minify. Everything, including ESM vs CJS, Vite's dev-vs-build split, and source maps, serves
-> the goal of "build the graph, then ship the least JS possible."**
+Your bundle is huge. The dev server is slow. You ship a full library but use one function. Your app takes seconds to load on a slow network. These are real SDE-2 questions. The job description names Vite. The whole area becomes small once you see the bundler as a graph optimizer whose job is shipping less.
 
-From "graph optimizer that ships less" you understand why ESM (static imports) enables tree-shaking.
-CJS (dynamic require) cannot do this. You understand why Vite is fast in dev (native ESM, no bundling) but bundles
-for prod (Rollup). You understand why code-splitting helps first load.
+The browser can fetch JavaScript. But hundreds of separate module files mean hundreds of requests. This is slow, especially before HTTP/2. Browsers historically could not run Node's CJS `require`. So bundlers combine modules into a few files and transform the syntax.
 
----
+## Why Existing Solution Failed
 
-## Learning Objectives
+Before bundlers, you loaded scripts with individual `<script>` tags. Every dependency was a separate HTTP request. This worked for small apps but collapsed as apps grew. You also had global scope pollution. One library overwrote another's globals. There was no dependency management.
 
-1. Explain the module graph and ESM vs CJS (and why ESM enables tree-shaking).
-2. Explain tree-shaking and code-splitting as "ship less / ship later."
-3. Explain Vite's two-mode design (esbuild dev server + Rollup prod build) and why.
-4. Know what source maps and minification do.
+CommonJS (CJS) came from Node. It was better: explicit requires, no globals. But CJS has a fatal flaw for browsers. `require()` is dynamic. You can call it conditionally at runtime. A tool cannot statically know which exports are used. So it cannot safely drop unused code. CJS was designed for servers where loading cost is irrelevant. It was not designed for browsers where every kilobyte matters.
 
----
+```js
+// CJS require is dynamic. The bundler cannot analyze this statically.
+const lib = someCondition ? require("heavy-lib") : require("light-lib");
+// The bundler must include both because it doesn't know which path runs.
+```
 
-## Key Mental Models
+The bundler conservatively includes everything from a CJS module. You pay for code you never use.
 
-- **Build = walk imports → dependency graph → emit optimized files.**
-- **ESM is static** (`import` at top, analyzable) → enables tree-shaking. **CJS is dynamic**
-  (`require()` anywhere) → hard to shake.
-- **Tree-shaking** drops unused exports; **code-splitting** defers rarely-used code to lazy chunks.
-- **Vite dev = unbundled native ESM (instant HMR); Vite build = bundled (Rollup) for the network.**
+## Mental Model
 
----
+A bundler is a GRAPH OPTIMIZER. It starts at your entry file. It follows every `import` to build a dependency graph of modules. Then it emits the smallest, fastest set of files the browser can load. It has two jobs. One: RESOLVE and COMBINE modules so the browser makes few requests. Two: SHIP LESS. Drop unused code (tree-shaking). Split rarely-used code into separate chunks (code-splitting). Minify. Everything, including ESM vs CJS, Vite's dev-vs-build split, and source maps, serves the goal of "build the graph, then ship the least JavaScript possible."
 
-## Introduction
+From "graph optimizer that ships less" you understand why ESM (static imports) enables tree-shaking. CJS (dynamic require) cannot do this. You understand why Vite is fast in dev (native ESM, no bundling) but bundles for prod (Rollup). You understand why code-splitting helps first load.
 
-"Why is my bundle huge?" "Why is my dev server fast?" "Why is this import not tree-shaken?" These are real SDE-2
-questions. The job description names Vite. The whole area becomes small once you see the bundler as a graph
-optimizer whose job is shipping less.
+ESM is the key. `import` and `export` are static. They are top-level. They are resolved before running. The bundler knows exactly which exports each module uses and drops the rest. CJS `require()` is dynamic and runtime. The tool cannot be sure what is used and tends to include everything.
 
----
-
-## Problem: modules and why bundling existed
-
-The browser can fetch JS. But hundreds of separate module files mean hundreds of requests. This is slow,
-especially before HTTP/2 (Ch 13). Browsers historically could not run Node's CJS `require`. So bundlers
-combine modules into a few files and transform the syntax. Module systems:
-
-- **CommonJS (CJS)** uses Node's `require()` and `module.exports`. It is **dynamic**. You can `require()`
-  conditionally at runtime. So a tool cannot statically know which exports are used. This means poor
-  tree-shaking.
-- **ES Modules (ESM)** use `import` and `export`. They are **static**. Imports are top-level and resolved before
-  running. They are statically analyzable. The bundler *knows* exactly which exports each module uses and
-  drops the rest. ESM is the modern standard and the reason tree-shaking works.
+## Visualization
 
 ```mermaid
 flowchart TD
@@ -77,124 +52,157 @@ flowchart TD
   graph --> opt["tree-shake unused + split + minify"] --> out["few optimized files"]
 ```
 
----
-
-## Tree-shaking & code-splitting (ship less / later)
-
-```js
-// tree-shaking: import one function from a 70-fn library
-import { debounce } from "lodash-es";   // ESM → bundler includes ONLY debounce, drops the rest
-import _ from "lodash";                 // CJS default import → often pulls the WHOLE library
-
-// code-splitting: defer a route's code to a separate chunk loaded on demand
-const Settings = lazy(() => import("./Settings"));   // its JS only downloads when navigated to
-```
-
-- **Tree-shaking** means dead-code elimination across the ESM graph. Unused exports never reach the
-  bundle. It requires ESM and side-effect-free modules. Setting `"sideEffects": false` in package.json helps.
-- **Code-splitting** means breaking the graph at `import()` boundaries into chunks. The entry bundle
-  shrinks. Rarely-used code loads later (Ch 08 "ship less now"). Route-level splitting is the
-  most effective form of code-splitting.
-
----
-
-## Vite's two modes: why it is fast in dev
+The dependency graph starts at the entry file and follows every import. The bundler then optimizes and emits a few files.
 
 ```mermaid
 flowchart LR
   subgraph dev["DEV (vite dev)"]
     s["native ESM: browser imports modules directly"] --> nob["NO bundling of your app"]
-    nob --> hmr["esbuild transpiles on-demand → instant startup + fast HMR"]
+    nob --> hmr["esbuild transpiles on-demand, instant startup + fast HMR"]
   end
   subgraph build["BUILD (vite build)"]
     r["Rollup bundles + tree-shakes + splits + minifies"] --> prod["few optimized files for the network"]
   end
 ```
 
-- **Dev:** the browser supports native ESM. So Vite serves your modules **unbundled** and only
-  transpiles what is requested. It uses esbuild, which is written in Go and very fast. The result is near-instant
-  server start and HMR that updates only the changed module. This works regardless of app size. Webpack
-  bundled everything up front and got slow as apps grew.
-- **Build:** unbundled ESM means too many requests for production. So Vite uses **Rollup** to bundle,
-  tree-shake, code-split, and minify into a few cache-friendly files.
+Vite uses two modes. Dev uses native ESM with esbuild for fast iteration. Build uses Rollup for network-optimized output.
 
-Two modes because dev optimizes *iteration speed* and prod optimizes *network delivery*. These are different
-goals that need different tools.
+## Engine Simulation
 
----
+Trace what happens when you write this import:
 
-## Source maps & minification
+```js
+import { debounce } from "lodash-es";
+```
 
-- **Minification** strips whitespace/comments and shortens names → smaller bundle (less to
-  download/parse, Ch 02). Done at build.
-- **Source maps** map minified prod code back to your original source so stack traces and
-  debugging (and Sentry, Ch 22) point to real lines. Ship them to your error tracker, not always
-  to users.
+Step by step:
 
----
+1. The bundler reads your entry file. It finds this import statement.
+2. It resolves `lodash-es` in node_modules. It reads the package's `package.json` to find the entry point.
+3. It parses the entry file of lodash-es. It builds an AST (Abstract Syntax Tree) of every export.
+4. It marks `debounce` as "used." All other exports are "unused."
+5. It checks each unused export for side effects. If a top-level statement runs code on import (like `console.log` or modifying a global), the bundler must keep it even if the export is unused.
+6. It walks deeper into only the modules that `debounce` depends on. It follows that chain until every import resolves.
+7. It dead-code eliminates everything not marked "used" and not "side-effectful."
+8. It outputs a single chunk (or multiple chunks with code-splitting) containing only `debounce` and its transitive dependencies.
 
-## Interview Discussion (reason first)
+Result: Instead of the full 70KB lodash library, your bundle gets maybe 4KB for `debounce` plus its helpers.
 
-**Q1. "Why is Vite's dev server so fast?"**
-> "In dev it does not bundle your app. It serves native ESM so the browser imports modules
-> directly. It transpiles on demand with esbuild, which is written in Go and very fast. Startup and HMR do not slow down
-> with app size like Webpack's full bundling did. For production it switches to Rollup to bundle,
-> tree-shake, and split. Unbundled ESM means too many requests for production."
+Now trace what happens with CJS:
 
-**Q2. "Why does ESM tree-shake but CJS often does not?"**
-> "ESM imports are static and top-level. So the bundler can statically decide exactly which
-> exports are used and drop the rest. CJS `require()` is dynamic and runtime. So the tool cannot
-> be sure what is used and tends to include everything."
+```js
+import _ from "lodash";
+```
 
-**Q3. "My bundle is huge. How do you fix it?"**
-> "Analyze it with rollup-plugin-visualizer. Import named ESM exports, not whole libraries. Use route-
-> level code-splitting with `lazy` and `import()`. Drop heavy dependencies or swap for lighter ones. Make sure
-> tree-shaking is not blocked by side effects. Measure first, then cut the biggest chunks (Ch 08)."
+Many libraries ship a CJS default export. When you `import _ from "lodash"`, the bundler sees a default import of the whole module. It cannot trace which properties are accessed because they could be accessed dynamically (`_[someKey]`). It includes the entire library. Tree-shaking is defeated.
 
-*Scoring:* full = graph-optimizer + ESM-static-enables-shaking + Vite dev/build split.
+## Internal Implementation
 
----
+Tree-shaking is dead code elimination at the module boundary level. It works because ESM has a static structure. The bundler knows the full import/export relationship graph before any code runs.
+
+Rollup (used by Vite for production builds) pioneered effective tree-shaking. It uses a technique called "live binding." It tracks exactly which bindings are imported and re-exported. It then eliminates any binding that is never referenced.
+
+Vite uses two different tools for two different phases:
+
+- **Dev (esbuild):** written in Go. It transpiles TypeScript and JSX on demand. It does NOT bundle your code. The browser imports modules via native ESM. This gives instant startup. HMR only re-transpiles the changed file.
+- **Build (Rollup):** bundles everything. Tree-shakes, code-splits, minifies. Output is a few optimized files for the network.
+
+```js
+// esbuild in dev: transpiles one file at a time, no bundling
+// Browser does: import { debounce } from "/@fs/node_modules/lodash-es/debounce.js"
+// Each file is a separate HTTP request (fast with HTTP/2)
+
+// Rollup in build: bundles everything into a few files
+// Output: dist/assets/index-abc123.js (all code in one file, tree-shaken)
+```
+
+Source maps map the minified output back to your original source. They are generated during build. They should be uploaded to your error tracker (Sentry) but not always shipped to users.
+
+## Real World Example
+
+You have a calendar app built with Vite. The entry point imports `date-fns` for date formatting. Without tree-shaking, `date-fns` adds over 100KB to the bundle. With tree-shaking and named imports:
+
+```js
+import { format, addDays, isToday } from "date-fns";
+```
+
+The bundler includes only these three functions. The bundle shrinks from 100KB to 8KB. You also route-split your Settings page which users rarely visit. Settings code (40KB) loads only when someone navigates there.
+
+Before optimization: initial bundle 340KB, load time 3.2 seconds on 3G.
+After optimization: initial bundle 120KB, load time 1.1 seconds on 3G.
+
+The difference came from two changes: named ESM imports instead of default imports, and route-level code-splitting. No architecture change. No library swap. Just understanding how the bundler works.
+
+## Tradeoffs
+
+**Native ESM in dev (Vite):** Fast startup. Instant HMR. But every module is a separate HTTP request. This works because HTTP/2 multiplexes requests. It can still fail if you have thousands of modules.
+
+**Bundled ESM in prod (Rollup):** Fewer requests. Better compression ratio (one big file compresses better than many small ones). But the build step is slower. Changing one import can invalidate the entire bundle.
+
+**CJS dependencies:** Many npm packages still ship CJS. They cannot be tree-shaken. You import the whole thing or nothing. This is a real problem that the ecosystem is slowly fixing.
+
+**Side effects:** If a module has side effects (modifies a global, sets up a polyfill), the bundler must keep it even if you do not use its exports. You can tell the bundler with `"sideEffects": false` in package.json, but if you are wrong, code breaks.
+
+**Source maps in production:** They help debugging but expose your source code. Best practice: upload to error tracker only. Do not ship to end users unless you have a privacy review.
 
 ## Common Mistakes
 
-- **`import _ from "lodash"`** (whole library) instead of `lodash-es` named imports. This prevents tree-shaking.
-- **No code-splitting.** One giant entry bundle blocks first paint.
-- **Assuming dev performance equals prod performance.** Dev is unbundled. Prod is bundled.
-- **Side-effectful modules** that silently defeat tree-shaking.
-- **Shipping source maps publicly** when they should only go to the error tracker.
+- `import _ from "lodash"` (whole library) instead of `lodash-es` named imports. This prevents tree-shaking.
+- No code-splitting. One giant entry bundle blocks first paint.
+- Assuming dev performance equals prod performance. Dev is unbundled. Prod is bundled.
+- Side-effectful modules that silently defeat tree-shaking.
+- Shipping source maps publicly when they should only go to the error tracker.
+- Using CJS-only libraries in an ESM project without understanding the bundler penalty.
 
----
+## SDE-2 Interview Answer
 
-## Interview Questions
+**Question: "How does a bundler work and why does ESM matter for tree-shaking?"**
 
-1. What does a bundler do, start to finish? (entry → graph → optimize → emit.)
-2. ESM vs CJS. Why does the difference matter for tree-shaking?
-3. Why is Vite fast in dev and what changes for the production build?
-4. How does code-splitting help first load, and where do you split?
-5. What are source maps for, and where should they go?
+### Mid-level
 
----
+"A bundler combines multiple JavaScript files into fewer files that the browser can load efficiently. ESM imports are static, so the bundler knows which exports are used and can drop the rest. That is tree-shaking. CJS require is dynamic, so the bundler cannot do this and includes everything. Vite is fast in dev because it uses native ESM. The browser imports files directly instead of waiting for the bundler to process everything first. In production, Vite bundles with Rollup for network efficiency."
 
-## Homework
+### Senior
 
-1. Add `rollup-plugin-visualizer` to a Vite build; find the biggest dependency; replace a whole-
-   library import with named ESM imports and re-measure.
-2. Route-split a page with `React.lazy` + `Suspense`; confirm a separate chunk loads on navigation
-   in the Network tab.
-3. In `NOTES.md`: bundler-as-graph-optimizer + ESM-vs-CJS-shaking + Vite dev/build in 3 lines.
+"A bundler is a graph optimizer. It starts at the entry file and follows every import to build a dependency graph. Then it emits the smallest, fastest set of files. There are two jobs: resolve and combine modules so the browser makes few requests, and ship less through tree-shaking, code-splitting, and minification.
 
----
+ESM enables this because it is static. The bundler can analyze the entire graph before executing any code. It knows exactly which exports are used and drops the rest. CJS is dynamic. `require()` can appear anywhere. The bundler cannot know which exports are used, so it conservatively includes everything.
 
-## Summary
+Vite uses two different strategies because dev and prod optimize different things. Dev optimizes iteration speed. It uses native ESM with esbuild for on-demand transpilation. No bundling means instant startup and fast HMR regardless of app size. Prod optimizes network delivery. It uses Rollup to bundle, tree-shake, code-split, and minify. Unbundled ESM means too many HTTP requests for production."
 
-- A **bundler is a graph optimizer**. It walks imports to build a dependency graph. Then it emits the fewest, smallest
-  files. Two jobs: **resolve and combine** and **ship less** (tree-shake, split, minify).
-- **ESM is static and tree-shakeable. CJS is dynamic and not tree-shakeable.** You can drop unused exports only with ESM.
-- **Code-splitting** defers rarely-used code to lazy chunks. You ship less now (Ch 08).
-- **Vite** uses unbundled native ESM with esbuild in **dev** for instant HMR. It uses **Rollup** bundling in
-  **build** for network-optimized output. Different goals need different tools.
-- **Minification** shrinks the bundle. **Source maps** map prod code back to source for debugging and Sentry (Ch 22).
+### Engineering Lead
 
-## Go deeper
-Ch 08 (bundle as a perf lever), Ch 19 (what the bundle feeds), Ch 22 (source maps + Sentry). Vite
-and Rollup docs are the reference once this model is solid.
+"I focus on making build performance a team concern. The first step is measuring. I add bundle analysis to CI so every PR shows before and after sizes. I set a bundle budget and make it part of the definition of done.
+
+I establish patterns. Named ESM imports everywhere. Route-level code-splitting as the default for new pages. Side-effect tracking in package.json. I make sure the team understands that CJS dependencies have a real cost. When adding a dependency, the question is always: does it ship ESM? Can we import only what we need?
+
+I also think about dev experience. Vite's fast dev server improves team velocity. But I ensure the production build is part of the CI pipeline. No one should be surprised that the prod bundle is much heavier than the dev experience suggests.
+
+The organizational pattern is: measure, set standards, automate enforcement, review when new dependencies are added."
+
+## Follow-up Questions
+
+1. Start with an entry file. Walk through what the bundler does step by step from entry to emitted files. (foundational)
+
+2. A teammate imports `_ from "lodash"`. Explain why it bypasses tree-shaking and how to fix it. (application)
+
+3. Vite's dev server is fast for small apps. Does it stay fast as the app grows to 1000 modules? Explain why or why not. (analysis)
+
+4. You add a charting library (200KB) but only use it on one route. How do you prevent it from blocking the initial page load? Show the code change and explain what the bundler does with it. (application plus analysis)
+
+5. A library you depend on has `"sideEffects": true` in its package.json. You know it has no side effects. What happens to tree-shaking? How do you override this? What could go wrong? (synthesis)
+
+## Mental Trigger
+
+**Graph optimizer that ships less.**
+
+## One Page Revision
+
+- Bundler walks imports from entry point, builds dependency graph, emits optimized files.
+- ESM is static and analyzable. CJS is dynamic and not analyzable.
+- Tree-shaking drops unused exports. Code-splitting defers rarely-used code to lazy chunks.
+- Vite dev = unbundled native ESM with esbuild for instant HMR.
+- Vite build = Rollup bundles, tree-shakes, code-splits, minifies for the network.
+- Side effects block tree-shaking. Use `"sideEffects": false` in package.json.
+- Minification shrinks bundle size. Source maps map prod code back to source for debugging.
+- Bundle analysis in CI prevents regressions. Set a budget.

@@ -5,66 +5,26 @@ part: "Architecture"
 description: "Server state, caching, mutations, optimistic updates"
 ---
 
-
-> Prerequisites: async/await, Promise execution, event loop; `useState` & re-render mechanics; `useEffect` lifecycle & stale closures. JD-critical:
-> a product company lists TanStack Query twice. It's the data layer behind Interviewer's contacts table.
-
----
-
-## The one mental model
-
-> **Server state is not your state. It is a CACHE of data that lives on someone else's machine
-> and can go stale at any moment. So you do not "store" it in `useState`. You cache it keyed by
-> *what you asked for* (the query key). You adopt a policy: show the cached copy instantly,
-> and revalidate in the background (stale-while-revalidate). TanStack Query is that cache plus that
-> policy engine. Every feature (staleTime, refetch, invalidation, optimistic updates) is just
-> a knob on "how fresh must this cached copy be, and when do I re-ask?"**
-
-From this you understand the whole API. You will not memorize options. You will ask "what does this knob do to cache freshness?" and the name explains itself.
-
----
-
-## Learning Objectives
-
-1. Explain why server state needs a different tool than `useState` or Redux (the core "why").
-2. Use query keys as cache identity. Explain `staleTime` vs `gcTime` precisely.
-3. Explain invalidation and optimistic updates (the contacts-table status flip).
-4. Map TanStack onto the windowed or infinite contacts list.
-
----
-
-## Key Mental Models
-
-- **Server state = remote, shared, async, can-go-stale.** Client state = yours, synchronous.
-- **Query key = cache key.** Same key means same cached entry, deduped across components.
-- **stale-while-revalidate:** serve cache now, refetch in background, swap when fresh arrives.
-- **`staleTime`** = how long "fresh" (no refetch). **`gcTime`** = how long an *unused* entry stays in memory before garbage collection. Different axes.
-
----
-
-## Introduction
-
-The classic mistake is treating fetched data like local state. You use `useEffect(fetch)` plus `useState(data)` plus manual loading and error flags. You duplicate this in every component. You have no caching, no deduping, and no refetch policy. TanStack Query exists because "data from a server" has properties that local state does not. It is shared. It goes stale. Multiple components want the same data. You need loading, error, and refetch handling. Once you see fetched data as a *cache*, the library becomes obvious.
-
----
+> Prerequisites: async/await, Promise execution, event loop; `useState` and re-render mechanics; `useEffect` lifecycle and stale closures. JD-critical: this company lists TanStack Query twice. It is the data layer behind Interviewer's contacts table.
 
 ## Problem
 
-```jsx
-function Contacts() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    setLoading(true);
-    fetch("/contacts").then(r => r.json()).then(setData).catch(setError)
-      .finally(() => setLoading(false));
-  }, []);
-  // ...repeat this in every component that needs contacts
-}
-```
+Every component that fetches data repeats the same pattern. `useEffect` with `fetch` inside. Three `useState` calls for data, loading, error. No sharing between components. Two components mounted at the same time fire two identical requests. Remount after navigation fires another request. No cache. No retry. No background refresh. The code is repetitive, bug-prone, and wasteful.
 
-Problems: no caching (refetches on every mount), no dedup (two components means two requests), no background refresh, no shared invalidation, stale-closure risk (the effect callback captures an outdated variable when deps are incomplete, see Ch 05), and boilerplate everywhere. The root issue: you are hand-rolling a cache badly. The fix: **extract the cache and the fetch policy into a library**, keyed by the request.
+## Why Existing Solution Failed
+
+`useState` plus `useEffect` treats server data as local state. It is not. Server data is remote, shared across components, asynchronous by nature, and can go stale at any moment. Local state belongs to one component. Server data belongs to the application. Hand-rolling this means you reimplement a cache badly in every component. You get no deduplication, no garbage collection for unused entries, no way to invalidate across components, and stale-closure bugs when the effect captures outdated variables.
+
+## Mental Model
+
+Server state is not your state. It is a cache of data that lives on someone else's machine. It can go stale at any moment. So you do not store it in `useState`. You cache it keyed by what you asked for (the query key). You adopt a policy: show the cached copy instantly, and revalidate in the background. This is stale-while-revalidate. TanStack Query is that cache plus that policy engine. Every feature (staleTime, gcTime, refetch, invalidation, optimistic updates) is just a knob on "how fresh must this cached copy be, and when do I re-ask?"
+
+Key terms:
+- **Query key = cache key.** Same key means same cached entry, deduped across components.
+- **stale-while-revalidate:** serve cache now, refetch in background, swap when fresh arrives.
+- **staleTime** = how long data stays fresh (no refetch). **gcTime** = how long an unused entry stays in memory before garbage collection. Different axes.
+
+## Visualization
 
 ```mermaid
 sequenceDiagram
@@ -74,71 +34,13 @@ sequenceDiagram
   C->>Q: useQuery(['contacts', filters])
   alt cache miss or stale
     Q->>S: fetch
-    S-->>Q: data → store under key
+    S-->>Q: data, store under key
   end
   Q-->>C: cached data (instant if present)
   Note over Q: if stale, refetch in background, then push fresh data
 ```
 
----
-
-## Engine Simulation: the cache lifecycle
-
-```jsx
-const { data, isLoading, isFetching } = useQuery({
-  queryKey: ['contacts', { filters, page }],
-  queryFn: () => api.getContacts(filters, page),
-  staleTime: 30_000,   // fresh for 30s, no refetch on remount or focus within 30s
-  gcTime: 5*60_000,    // keep unused cache 5 min, then drop
-});
-```
-
-Trace it:
-
-```
-mount #1:  key ['contacts',{...}] not in cache → fetch → store → status 'success'
-           isLoading true→false; data shown
-remount within 30s:  key present & FRESH (within staleTime) → serve cache, NO fetch
-remount after 30s:   key present but STALE → serve cache instantly + refetch in background
-                     (isFetching=true while data still shows; swaps when fresh arrives)
-component unmounts:  entry becomes 'inactive'; gcTime timer starts
-no observers for 5min: entry garbage-collected
-```
-
-Two distinct timers, the classic interview confusion:
-- **`staleTime`** controls *refetching* (freshness). High staleTime means fewer requests.
-- **`gcTime`** controls *memory* (how long an unused entry survives so a remount is instant).
-
-`isLoading` = first load, no data yet. `isFetching` = any fetch in flight (including background revalidation while showing stale data). Show a subtle spinner on `isFetching` but content on `data`. This is the stale-while-revalidate UX.
-
----
-
-## Mutations and optimistic updates (the contacts status flip)
-
-Interviewer's table edits a contact's status inline. You do not want to refetch 500k rows. Two moves:
-
-**Invalidate** (simple): after the mutation, mark queries stale so they refetch.
-```jsx
-const m = useMutation({
-  mutationFn: updateStatus,
-  onSuccess: () => qc.invalidateQueries({ queryKey: ['contacts'] }),
-});
-```
-
-**Optimistic update** (instant UX): patch the cache *before* the server confirms, roll back on error. This is what makes a 500k-row table feel instant.
-```jsx
-useMutation({
-  mutationFn: updateStatus,
-  onMutate: async (next) => {
-    await qc.cancelQueries({ queryKey: ['contacts'] });      // stop races
-    const prev = qc.getQueryData(['contacts']);              // snapshot for rollback
-    qc.setQueryData(['contacts'], patch(prev, next));        // patch cache now
-    return { prev };
-  },
-  onError: (_e, _next, ctx) => qc.setQueryData(['contacts'], ctx.prev), // rollback
-  onSettled: () => qc.invalidateQueries({ queryKey: ['contacts'] }),    // reconcile
-});
-```
+Mutation lifecycle with optimistic update:
 
 ```mermaid
 stateDiagram-v2
@@ -146,68 +48,104 @@ stateDiagram-v2
   idle --> optimistic: onMutate (patch cache, snapshot)
   optimistic --> confirmed: onSuccess (server agrees)
   optimistic --> rolledback: onError (restore snapshot)
-  confirmed --> idle: onSettled (invalidate→reconcile)
+  confirmed --> idle: onSettled (invalidate, reconcile)
   rolledback --> idle
 ```
 
----
+## Engine Simulation
 
-## Infinite or windowed contacts list
+Track what happens with this code:
 
-`useInfiniteQuery` pages data with a cursor. Pair it with virtualization (renders only visible rows in DOM for performance, see Ch 08). The **query cache** holds the fetched pages (data layer). The **virtualizer** decides which cached rows are in the DOM (view layer). Real-time status events call `setQueryData` to patch a row in the cache. If the row is visible it re-renders in place (React uses `key` to match elements across renders for efficient in-place updates, see Ch 06). If off-screen, it is correct when scrolled to. This is the clean "data layer vs DOM layer" separation that Interviewer probed. See the Interviewer's real-time contacts-table worked example (guide §2f).
+```jsx
+const { data, isLoading, isFetching } = useQuery({
+  queryKey: ['contacts', { filters, page }],
+  queryFn: () => api.getContacts(filters, page),
+  staleTime: 30_000,
+  gcTime: 5 * 60_000,
+});
+```
 
----
+Execution trace:
 
-## Interview Discussion (reason first)
+Mount #1: key `['contacts',{...}]` not in cache. TanStack calls queryFn. Fetch fires. Response arrives. Stored under key with status 'success'. isLoading flips true to false. data renders.
 
-**Q1. "Why not just `useState` + `useEffect` to fetch?"**
-> "Because server data is a *cache*, not local state. It is shared, async, and goes stale. Hand-rolling means no dedup, no caching, no background refresh, no shared invalidation, and stale-closure bugs. TanStack centralizes the cache keyed by the request and gives a refetch policy."
+Remount within 30 seconds: key present and fresh (within staleTime). Serve cache instantly. No fetch. Component renders immediately.
 
-**Q2. "staleTime vs gcTime?"**
-> "`staleTime` = how long data is considered fresh, so no refetch happens (controls requests). `gcTime` = how long an *unused* cache entry stays in memory before it is dropped (controls memory and instant remounts). They are orthogonal. A query can be stale but still cached."
+Remount after 30 seconds: key present but stale. Serve cache instantly for instant render. Then refetch in background. isFetching is true during background fetch. data stays visible. When fresh data arrives, swap in. isFetching goes false.
 
-**Q3. "Edit one contact's status in a 500k table, how, without refetching everything?"**
-> "Optimistic update: `onMutate` cancels in-flight queries, snapshots, and calls `setQueryData` to patch just that row. The UI flips instantly. `onError` rolls back to the snapshot. `onSettled` invalidates to reconcile with the server. No full refetch."
+Component unmounts: entry becomes inactive. gcTime timer starts. 5 minutes pass with no observers. Entry garbage collected.
 
-*Scoring:* full answer includes cache framing, two-timers, and optimistic flow with rollback. Fail answer says "it is like Redux for API calls."
+Two timers explained:
+- staleTime controls refetching. High staleTime means fewer network requests.
+- gcTime controls memory. It determines how long an unused entry survives so a remount can be instant.
 
----
+isLoading is true only on first load when no data exists yet. isFetching is true during any fetch in flight, including background revalidation while showing stale data. Show a subtle spinner on isFetching but keep content on data. This is the stale-while-revalidate UX.
+
+## Internal Implementation
+
+TanStack Query maintains a JavaScript object acting as a map of query keys to cache entries. Each entry holds the data, status, and metadata (staleTime, gcTime, subscribers). When useQuery mounts, it subscribes to the cache entry for its key. If the entry exists and is fresh, it returns the data immediately. If it is stale or missing, it schedules a fetch.
+
+The fetch internally calls the queryFn, awaits the response, and stores the result in the cache entry. All subscribers (components using that key) receive the new data and re-render. This is a publish-subscribe pattern. The cache entry tracks subscriber count. When count hits zero (all components unmounted), the gcTime timer starts. When it fires, the entry is removed from the map.
+
+Invalidation sets the entry's stale flag. Next subscriber check sees the stale flag and triggers a refetch. Optimistic updates directly call setQueryData on the entry, which pushes the patched data to all subscribers.
+
+## Real World Example
+
+Interviewer's contacts table shows a list of contacts fetched from the server. The user can edit a contact's status inline. With 500,000 rows, refetching on every status change is too expensive.
+
+The solution uses two strategies. For simple cases, call invalidateQueries after the mutation. This marks the contacts cache stale. Next time a component reads it, it refetches. For instant UX, use an optimistic update. On mutate, cancel any in-flight queries for the same key. Snapshot the current cache. Patch just the changed row with setQueryData. The UI flips instantly. If the server rejects the change, roll back to the snapshot. On settle, invalidate to reconcile with the server.
+
+For the infinite scrolling contacts list, useInfiniteQuery holds fetched pages in the cache. A virtualizer (react-virtual or similar) renders only visible rows in the DOM. The query cache is the data layer. The virtualizer is the view layer. Real-time status events call setQueryData to patch a single row. If visible, it re-renders in place. If off-screen, it is correct when scrolled to.
+
+## Tradeoffs
+
+TanStack Query adds bundle size (roughly 10KB gzipped). For a simple app with one or two fetch calls, it might be overkill. You can use plain fetch plus useEffect. But as the app grows, the hand-rolled approach costs more in bugs and maintenance than the library overhead.
+
+staleTime and gcTime need tuning. Too short staleTime means too many requests. Too long staleTime means stale data. gcTime that is too short means frequent refetches on remount. gcTime that is too long wastes memory for data no one views.
+
+Optimistic updates add complexity. You need cancelQueries, snapshot, rollback, and reconcile. For simple mutations, invalidate alone is simpler and safer.
 
 ## Common Mistakes
 
-- **Putting server data in Redux or `useState`** and syncing manually. You are re-implementing TanStack badly.
-- **Confusing `staleTime` and `gcTime`** (or thinking `staleTime: Infinity` frees memory. It does not. That is `gcTime`).
-- **Unstable query keys** (new object identity that is actually the same query, or missing a variable the query depends on, which leads to stale data).
-- **Optimistic update without `cancelQueries`.** An in-flight refetch overwrites your patch.
-- **Forgetting rollback** on error. The UI then lies.
+- Putting server data in Redux or useState. You reimplement TanStack badly.
+- Confusing staleTime and gcTime. staleTime controls freshness (refetching). gcTime controls memory (how long unused entries survive).
+- Unstable query keys. New object identity that represents the same query causes cache misses. Missing a variable the query depends on causes stale data.
+- Optimistic update without cancelQueries. An in-flight refetch overwrites your patch.
+- Forgetting rollback on error. The UI then shows incorrect data.
 
----
+## SDE-2 Interview Answer
 
-## Interview Questions
+**Mid-level variant:**
+"Server data is different from client data because it is shared, async, and can go stale. useState and useEffect hand-rolling means no caching, no dedup, and stale-closure bugs. TanStack Query wraps fetch in a cache keyed by the query key. It serves cached data instantly and refetches in the background when stale. staleTime controls how long data is fresh. gcTime controls how long unused data stays in memory."
 
-1. Why is server state different from client state? Give 3 properties.
-2. Walk the cache lifecycle of a query across mount, remount-fresh, remount-stale, unmount.
-3. Implement an optimistic status toggle with rollback. Why `cancelQueries` first?
+**Senior variant:**
+"I frame server state as a cache, not local state. The query key is the cache identity. Two identical keys in different components share one cache entry and one fetch. staleTime and gcTime are orthogonal controls: one for request frequency, one for memory. For mutations, I use invalidation for simple cases and optimistic updates for instant UX on large lists. The optimistic pattern requires four steps: cancelQueries to stop races, snapshot for rollback, setQueryData for the patch, and onSettled invalidate for reconciliation. I pair useInfiniteQuery with virtualization for large lists, giving clean separation between data layer and view layer."
+
+**Engineering Lead variant:**
+"At the team level, I establish a pattern: server state always goes through TanStack Query, never into Redux or useState. The team uses consistent staleTime and gcTime defaults based on data freshness requirements. Optimistic updates are documented with a template showing cancel, snapshot, patch, and rollback. Code review catches unstable query keys. The architecture separates data fetching (TanStack Query) from state management (Zustand for client state) from UI components, keeping each layer replaceable. I also ensure the team understands the cache lifecycle so they debug cache issues instead of working around them."
+
+## Follow-up Questions
+
+1. Why is server state different from client state? Give three properties.
+
+2. Walk the cache lifecycle of a query across mount, remount-fresh, remount-stale, and unmount.
+
+3. Implement an optimistic status toggle with rollback. Why must you call cancelQueries first?
+
 4. How do query cache and virtualization split responsibilities in the contacts list?
-5. `isLoading` vs `isFetching`. When does each fire?
 
----
+5. isLoading versus isFetching. When does each fire, and how do you use them in the UI?
 
-## Homework
+## Mental Trigger
 
-1. Replace a `useEffect` plus `useState` fetch with `useQuery`. Toggle `staleTime` and watch refetch behavior on remount or refocus in the Network tab.
-2. Build an optimistic toggle (a "favorite" star). Force the server to error and confirm rollback.
-3. In `NOTES.md`: one line each for staleTime, gcTime, invalidate, optimistic update.
+Server state is a cache, not local state.
 
----
+## One Page Revision
 
-## Summary
-
-- **Server state is a cache of remote data**, not local state. That single reframe justifies the whole library.
-- **Query key = cache identity** (dedup and sharing). **stale-while-revalidate**: serve cache, refetch in background.
-- **`staleTime`** controls freshness and refetching. **`gcTime`** controls how long unused cache survives in memory. Different axes.
-- **Mutations**: `invalidateQueries` (simple) or **optimistic update** (`onMutate` patch and snapshot, then `onError` rollback, then `onSettled` reconcile) for instant UX on big tables.
-- Pair `useInfiniteQuery` (data layer) with virtualization (view layer) for clean separation.
-
-## Go deeper
-TkDodo's *Practical React Query* posts are the definitive deep-dive once this model is solid. The contacts-table real-time UX is worked through in the companion interview guide §2.
+- Server state is a cache of remote data, not local state. This frame justifies the whole library.
+- Query key = cache identity. Same key means dedup and sharing across components.
+- stale-while-revalidate: serve cached data, refetch in background.
+- staleTime controls freshness and refetching. gcTime controls how long unused cache survives in memory. They are orthogonal.
+- Mutations: invalidateQueries for simple cases. Optimistic update with cancelQueries, snapshot, patch, rollback, reconcile for instant UX.
+- Pair useInfiniteQuery (data layer) with virtualization (view layer) for clean separation.
+- isLoading = first load, no data yet. isFetching = any fetch in flight including background revalidation.

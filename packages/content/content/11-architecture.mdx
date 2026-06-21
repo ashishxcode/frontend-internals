@@ -5,164 +5,125 @@ part: "Architecture"
 description: "State location, folder structure, design systems"
 ---
 
+> Prerequisites: TanStack Query cache model (Ch 10), React re-render behavior, useState/Context/Zustand tradeoffs, component composition. Covers the design-system, state-landscape, shadcn-Tailwind ground Interviewer probes, and the system-design framing for the contacts-table question.
 
-> Prerequisites: TanStack Query cache model (Ch 10), React re-render behavior, `useState`/Context/Zustand tradeoffs, component composition. Covers the design-system, state-landscape, shadcn-Tailwind
-> ground Interviewer probes, and the system-design framing for the contacts-table question.
+## Problem
 
----
+Where does state go? Put everything in a global store. Every change risks re-rendering and breaking unrelated features. Wide blast radius. Unrelated components re-render on every state change. Put everything local and you cannot share what must be shared. Without a design system, every team reinvents buttons, spacing, and color. Inconsistent UI everywhere. A change requires editing fifty files.
 
-## The one mental model
+## Why Existing Solution Failed
 
-> **Architecture is about CONTAINING CHANGE. Every decision answers: "when requirements change,
-> how small can I make the blast radius?" Two levers do most of the work. (1) Put state as LOW
-> (close to where it is used) as possible so changes stay local. (2) Hide volatile details
-> behind STABLE boundaries (components, hooks, modules) so callers do not break when internals
-> change. Good structure is not about folders. It is about who has to change when something does.**
+Global state as a default fails because it couples unrelated features. A change in one part of the store can break anything that reads the store. Context as a default state manager fails because every consumer re-renders on every value change. There is no selective subscription. Putting server data in Redux or Context fails because you reimplement caching and refetching that TanStack Query already handles. Folder-by-type (components/, hooks/, utils/) scatters a single feature across many directories. A change to one feature touches many folders.
 
-From "contain change" you understand why colocation beats global state. You see why server state is its own category (Ch 10). You know why composition (building complex UIs from small parts) beats configuration (big config objects). You learn why design systems exist. You learn how to reason about a frontend system-design question.
+## Mental Model
 
----
+Architecture is about containing change. Every decision answers: when requirements change, how small can I make the blast radius? Two levers do most of the work. Put state as low as possible (close to where it is used) so changes stay local. Hide volatile details behind stable boundaries (components, hooks, modules) so callers do not break when internals change. Good structure is not about folders. It is about who has to change when something does.
 
-## Learning Objectives
+From "contain change" you understand why colocation beats global state. You see why server state is its own category (Ch 10). You know why composition (building complex UIs from small parts) beats configuration (big config objects). You see why design systems exist. You learn how to reason about a frontend system-design question.
 
-1. Choose where state lives (the state-location decision tree). Understand why colocation wins.
-2. Map the state-management landscape (local, lifted, context, external store, server). Pick correctly, including Zustand's model.
-3. Explain design systems, Tailwind, and shadcn/ui as change-containment strategies.
-4. Run a frontend system-design interview (the contacts table) with a repeatable framework.
+## Visualization
 
----
-
-## Key Mental Models
-
-- **Colocation:** keep state next to its only consumer. Lift only when genuinely shared.
-- **Boundaries:** a component, hook, or module exposes a stable contract. Internals can change freely.
-- **State has categories**, each with a right tool. Do not put one kind in another's tool.
-- **Design system = one source of truth for UI.** A change propagates once.
-
----
-
-## Introduction
-
-At SDE-2, "architecture" means making sane structural calls and defending them with tradeoffs. It is not reciting folder layouts. The throughline is containing change. The same lens answers "where should this state go," "Context or Zustand," "how do we keep UI consistent," and "design the contacts page."
-
----
-
-## Problem: where does state go?
-
-Put everything in a global store. Every change risks re-rendering and breaking unrelated features. This gives a wide blast radius. Unrelated components re-render on every change (see Ch 08 perf). Put everything local and you cannot share what must be shared. The skill is matching each piece of state to the smallest scope that works.
+State-location decision tree:
 
 ```mermaid
 flowchart TD
-  q1{Is it server data?} -->|yes| server["TanStack Query (Ch 10) — it's a cache, not state"]
+  q1{Is it server data?} -->|yes| server["TanStack Query (Ch 10). It is a cache, not state"]
   q1 -->|no| q2{Used by one component?}
-  q2 -->|yes| local["useState/useReducer — local"]
+  q2 -->|yes| local["useState/useReducer. Local."]
   q2 -->|no| q3{Shared by a few nearby?}
-  q3 -->|yes| lift["lift to nearest common parent + pass props"]
-  q3 -->|no| q4{Truly app-global client state?<br/>theme, auth, cross-tree UI}
-  q4 -->|low-frequency| ctx["Context (beware: all consumers re-render)"]
-  q4 -->|frequent / selective| store["external store + selectors (Zustand/Jotai/Redux)"]
+  q3 -->|yes| lift["Lift to nearest common parent plus pass props"]
+  q3 -->|no| q4{Truly app-global client state? Theme, auth, cross-tree UI}
+  q4 -->|low-frequency| ctx["Context. Beware: all consumers re-render"]
+  q4 -->|frequent or selective| store["External store with selectors. Zustand/Jotai/Redux"]
 ```
 
----
+## Engine Simulation
 
-## The state-management landscape
+Take a theme toggle. The user clicks a button to switch from light to dark mode. Theme is a global value needed by every component.
 
-| State kind | Tool | Why |
-|---|---|---|
-| One component | `useState`/`useReducer` | Lowest blast radius |
-| A few nearby | Lift + props | Still local-ish, explicit |
-| App-global, rarely changes | **Context** | Simple, but every consumer re-renders on change |
-| App-global, changes often or selective reads | **Zustand / Jotai / Redux** | Subscribe to slices |
-| Remote, shared, async | **TanStack Query** (Ch 10) | It is a cache with a refetch policy |
+**Context approach:** The theme context provider holds `{ theme, setTheme }`. The button calls `setTheme('dark')`. The provider re-renders with the new value. Every consumer of `useContext(ThemeContext)` re-renders, even if they only read the value once and never change. This is fine for theme because it changes rarely. But if this was a frequently changing value like cursor position, all consumers re-render on every mouse move.
 
-**Why Context is not a state manager:** a Context value change re-renders *all* consumers. There is no selective subscription. This is fine for theme and auth (rare changes). It is bad for high-frequency state.
+**Zustand approach:** The store is created outside React.
 
-**Zustand's model (interview-ready):** a store outside React. Components subscribe via a **selector** and only re-render when *their selected slice* changes. There is no provider and no context re-render tax. `const count = useStore(s => s.count)`. That selector subscription is the key difference from Context. Jotai is atomic (bottom-up atoms). Redux is a single store with reducers and middleware (more ceremony, great devtools and time-travel, mostly superseded by Query plus Zustand for new apps).
-
----
-
-## Design systems, Tailwind and shadcn (they ask)
-
-**Problem:** without a single source of truth, every team reinvents buttons, spacing, and color. This leads to inconsistent UI and change-it-in-50-places.
-
-- **Design tokens** (color, spacing, typography scales) are the vocabulary. Change once, propagates everywhere.
-- **Tailwind** = utility classes mapped to tokens (config). No CSS-file context switch. Tiny prod CSS (unused classes purged). Consistency by construction. Tradeoff: verbose class lists.
-- **shadcn/ui** = NOT an npm dependency. A CLI **copies component source into your repo**. It is built on **Radix UI** primitives (accessible, unstyled behavior) plus Tailwind styles. You **own** the code. It is a starting point you customize, not a locked black box. That is its whole pitch: composable, accessible, owned. (Contrast MUI or AntD: installed, themed but constrained.)
-- **Framer Motion** = declarative animation (`layout`, `AnimatePresence` for exit). Respect `prefers-reduced-motion` (the OS-level accessibility setting that disables animations, see Ch 23).
-
----
-
-## Folder structure and scaling (briefly)
-
-Organize by **feature**, not by file-type. Colocate a feature's components, hooks, API, and tests so a change touches one folder (containment again). Have a shared `ui/` (design system) plus `lib/` (utils) plus `features/<x>/`. *Bulletproof React* is a good reference shape. Monorepos (Turborepo) share packages across apps with enforced boundaries.
-
----
-
-## Frontend system design framework (use on the contacts table)
-
-```
-1. Clarify   — scale, data shape, read/write patterns, real-time?, devices, constraints
-2. Data      — API shape, pagination (cursor vs offset), caching layer (Ch 10), source of truth
-3. Rendering — virtualization?, what re-renders, the four states (loading/empty/error/data)
-4. State     — selection model, filters in URL, optimistic updates
-5.   Realtime  — patch-in-place (update only the changed row) vs banner (show "data changed" message) — Ch 08 §2f, scroll anchoring
-6.   Cross-cuts— a11y (keyboard nav, screen readers — Ch 23), perf budget (Ch 08), error handling (error boundaries, retry — Ch 22), tradeoffs out loud
+```js
+const useThemeStore = create((set) => ({
+  theme: 'light',
+  setTheme: (theme) => set({ theme }),
+}));
 ```
 
-Apply it and you reproduce the full contacts-table answer in the interview guide §2.
+A component subscribes to only the `theme` slice:
 
----
+```jsx
+const theme = useThemeStore((s) => s.theme);
+```
 
-## Interview Discussion (reason first)
+When `setTheme('dark')` runs, only components that selected `s => s.theme` re-render. A component that selected a different slice does not re-render. There is no provider wrapper. The store sits outside the component tree.
 
-**Q1. "Context vs Zustand vs Redux: when each?"**
-> "Context for low-frequency global values (theme, auth). But every consumer re-renders on change, so not for hot state. Zustand for app-global client state with frequent or selective reads. Selector subscriptions avoid the Context re-render tax. No provider boilerplate. Redux when you need its middleware, devtools, or time-travel, or a big team convention. For new apps, TanStack Query (server) plus Zustand (client) usually covers it."
+## Internal Implementation
 
-**Q2. "Where should state live?"**
-> Walk the decision tree: server goes to Query. Single consumer goes to local. A few nearby go to lift. Global with rare changes goes to Context. Global with frequent changes goes to a store. "Default to the lowest scope. Lifting is a deliberate choice with a re-render cost."
+Zustand creates a plain JavaScript store outside React. The store holds state and a list of subscribers. When a component calls `useStore(selector)`, it subscribes to the store with that selector function. The store tracks which selectors depend on which parts of state. When state changes, the store diffs the previous selector output against the new selector output for each subscriber. Only subscribers whose selected value changed get notified and re-render.
 
-**Q3. "What is shadcn and why not just use MUI?"**
-> "shadcn copies accessible Radix-based components into your repo so you own and customize the code. It is a design-system starting point, not a dependency. MUI and AntD are installed libraries. They are faster to start, but you are constrained by their theming and you ship their bundle. shadcn trades a little setup for full ownership and Tailwind consistency."
+Context uses React's built-in propagation. When a context value changes, React marks the whole subtree below the provider for re-render. There is no selector mechanism. Every consumer re-renders regardless of whether they use the changed part of the value.
 
-*Scoring:* full answer includes containment lens, selector-vs-context-rerender, and shadcn-is-owned-source.
+This is the core distinction. Zustand does selective subscription at the store level. Context does broadcast re-render at the React tree level.
 
----
+## Real World Example
+
+Interviewer's contacts table. The page has a search bar, filter panel, sort controls, and the table itself. Each piece of state goes to its lowest reasonable scope.
+
+Search input text is local to the search component. It is not shared. useState is enough. Selected filters need to affect the query sent to the server. They go to the parent page component. TanStack Query holds the fetched contacts data. The sort column and direction are URL search params so they survive page refresh. The theme preference is global and rarely changes, so Context works.
+
+shadcn/ui provides the table, button, and input components. They are copied source files in the repo. The team customizes them for brand colors. Tailwind utility classes handle spacing and typography consistently. A design token change in tailwind.config updates everywhere.
+
+## Tradeoffs
+
+Colocation vs duplication. Keeping state local sometimes means duplicating logic across components. Lifting state adds props threading. Context solves prop threading but adds re-render overhead. Zustand solves re-render overhead but adds a dependency and a mental model of stores. There is no free lunch. Each tool fits a specific state category.
+
+shadcn vs MUI. shadcn gives full ownership of component code. You can customize anything. But you must maintain the code yourself. MUI gives a complete library with less setup but you fight the theming system and ship a bigger bundle. Choose shadcn when you need custom design and own the maintenance. Choose MUI when speed of shipping matters more than design flexibility.
+
+Feature folders vs type folders. Feature folders contain change within one directory. Type folders scatter a feature change across components/, hooks/, utils/, tests/. Feature folders win for containment. Type folders can work at very small scale when the whole app fits in one mental model.
 
 ## Common Mistakes
 
-- **Global store as a dumping ground.** This causes wide re-renders and coupling. Colocate first.
-- **Server data in Redux or Context.** You are re-implementing Query badly (Ch 10).
-- **Context for high-frequency state.** All consumers re-render.
-- **Folder-by-type at scale.** A feature change is scattered across many folders.
-- **Reaching for Redux reflexively** when Query plus local plus a little Zustand suffices.
+- Global store as a dumping ground. This causes wide re-renders and coupling. Colocate first.
+- Server data in Redux or Context. You reimplement Query badly (Ch 10).
+- Context for high-frequency state. All consumers re-render.
+- Folder-by-type at scale. A feature change is scattered across many folders.
+- Reaching for Redux reflexively when Query plus local plus a little Zustand suffices.
 
----
+## SDE-2 Interview Answer
 
-## Interview Questions
+**Mid-level variant:**
+"I match each piece of state to its smallest workable scope. Server data goes to TanStack Query. Local UI state uses useState. Shared state goes to the nearest common parent. Global rare state uses Context. Global frequent state uses Zustand with selectors. Colocation is the default. Lifting is a deliberate choice."
+
+**Senior variant:**
+"Architecture is about containing change. I apply two rules: put state as low as possible, and hide volatile details behind stable boundaries. The state-location decision tree gives me a repeatable answer for every piece of state. I use Context for low-frequency globals like theme because it is simple and the re-render tax is irrelevant for rare changes. I use Zustand for high-frequency globals because selector subscriptions avoid the Context re-render problem. For design systems, I prefer shadcn because the team owns the code and customizes freely. I organize by feature so a change touches one folder."
+
+**Engineering Lead variant:**
+"I establish conventions that encode the state-location decision tree. Server state goes to TanStack Query, never to Redux or Context. Client state uses Zustand with a documented pattern for selectors. The team agrees on feature folders. Design tokens live in one config file. I review architecture decisions through the containment lens: does this decision make future changes safer or riskier? I also run lightweight system-design reviews for new features using the clarify-data-render-state-realtime-crosscuts framework."
+
+## Follow-up Questions
 
 1. Walk the state-location decision tree for: form input, current theme, fetched contacts, a cross-page wizard step.
+
 2. Why does a Context value change re-render all consumers, and how does Zustand avoid it?
+
 3. Explain shadcn vs a component library. What is the tradeoff?
+
 4. Run the system-design framework on "design a notifications dropdown with unread counts."
-5. Feature-folders vs type-folders. Argue for one using "blast radius."
 
----
+5. Feature folders vs type folders. Argue for one using the concept of blast radius.
 
-## Homework
+## Mental Trigger
 
-1. Take a small app that overuses Context. Move one piece to local state and one to a Zustand selector. Observe re-render differences in the Profiler.
-2. Add a shadcn component to a Vite+Tailwind app. Inspect the copied source and customize it.
-3. In `NOTES.md`: the state-location decision tree from memory plus one line on Zustand selectors.
+Architecture = containing change.
 
----
+## One Page Revision
 
-## Summary
-
-- **Architecture = containing change.** Put state as low as possible. Put stable boundaries around volatile details. Folders come after this.
-- **Match state to its category:** local, lifted, Context (rare global), external store (frequent global, selector subscriptions), server (Query, Ch 10).
-- **Context re-renders all consumers. Zustand subscribes to slices.** That is the core distinction.
-- **Design system + tokens + Tailwind + shadcn** contain UI change. shadcn copies owned, accessible Radix source instead of installing a constrained library.
-- A **repeatable system-design framework** (clarify, data, render, state, realtime, cross-cuts) turns the contacts table into a structured answer.
-
-## Go deeper
-The design patterns chapter (composition vs configuration patterns) is the component-level companion. Ch 21 (state-manager internals) goes deeper. The contacts-table worked answer is in the interview guide.
+- Architecture = containing change. Put state as low as possible. Put stable boundaries around volatile details.
+- Match state to its category: local, lifted, Context (rare global), external store (frequent global, selector subscriptions), server (TanStack Query).
+- Context re-renders all consumers on any value change. Zustand subscribes to slices. That is the core distinction.
+- Design system + tokens + Tailwind + shadcn contain UI change. shadcn copies owned, accessible source instead of installing a constrained library.
+- Repeatable system-design framework: clarify, data, rendering, state, realtime, cross-cuts.
+- Organize by feature to contain change within one directory.

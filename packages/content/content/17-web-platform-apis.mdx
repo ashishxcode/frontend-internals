@@ -5,80 +5,21 @@ part: "Web Platform & Quality"
 description: "IntersectionObserver, ResizeObserver, Web Workers, Storage"
 ---
 
+## Problem
 
-> **Prerequisites:** understanding of the browser event loop and off-main-thread execution. You need to know why blocking the main thread freezes the UI. You also need to know paint timing and layout phases of the render pipeline. Basic performance measurement concepts help too.
+Your page freezes when the user scrolls. You added a scroll listener that checks element positions. It fires sixty times a second. Each check calls `getBoundingClientRect` which forces the browser to recalculate layout synchronously. The UI stutters. You also have a 200ms data transformation that freezes the page while it runs. The scrolling stops. The animation stops. The user types and nothing appears until the transform finishes.
 
----
+## Why Existing Solution Failed
 
-## The one mental model
+The old approach polled. Scroll listeners polled position data every frame. Window resize listeners polled window size. `setTimeout` polled for visibility changes. Each poll forced layout recalculations on the hot path. The polling was wasteful because the browser already knows when these things change. The browser tracks scroll position, element visibility, and element size internally. Old code asked the browser to compute what it already knew, on every tick.
 
-> **The browser gives you EVENT-DRIVEN primitives so you never have to POLL or BLOCK. Instead of
-> saying "every frame, check if this element is on screen or resized or changed," you register a callback.
-> The browser calls you when it matters. It does this efficiently, off your hot path. The pattern is
-> always the same: create an observer or scheduler, hand it a callback, the browser invokes it at
-> the right time. And when you need real computation without freezing the one thread (Ch 02),
-> you move it to another thread with a Web Worker.**
+For heavy computation, the old approach ran everything on the main thread. Browsers give you one thread for rendering, JavaScript, and user input. A 200ms sort blocked all three. Users saw a frozen page with no feedback. The mental model was wrong: developers treated the main thread as the only thread.
 
-From "don't poll, get notified" you understand why IntersectionObserver beats scroll-handler math.
-You understand why ResizeObserver beats window-resize listeners. You understand why `requestAnimationFrame` is the right place
-for visual updates, and why heavy work belongs in a Worker.
+## Mental Model
 
----
+The browser gives you EVENT-DRIVEN primitives so you never have to POLL or BLOCK. Instead of saying "every frame, check if this element is on screen or resized or changed," you register a callback. The browser calls you when it matters. It does this efficiently, off your hot path. The pattern is always the same: create an observer or scheduler, hand it a callback, the browser invokes it at the right time. When you need real computation without freezing the main thread, you move it to another thread with a Web Worker.
 
-## Learning Objectives
-
-1. Use **IntersectionObserver** for visibility (infinite scroll, lazy-load) instead of scroll math.
-2. Use **ResizeObserver** for element-size reactions; **rAF** vs **requestIdleCallback** timing.
-3. Move heavy compute to a **Web Worker** to keep the main thread free (Ch 02).
-4. Pick the right **storage** (localStorage / sessionStorage / IndexedDB / cookies) and use the
-   History API for client routing.
-
----
-
-## Key Mental Models
-
-- **Observer pattern:** register a callback. The browser fires it on the event. No polling.
-- **`rAF` = right before paint** (Ch 07) → visual updates. **`requestIdleCallback` = spare time**
-  → low-priority work.
-- **Web Worker = a second thread** with no DOM access; talk via `postMessage`.
-- **Storage tiers** differ by size, lifetime, sync/async, and whether they're sent to the server.
-
----
-
-## Introduction
-
-These APIs show up all the time in the job description's world. Infinite scroll uses IntersectionObserver.
-Responsive components use ResizeObserver. Smooth interactions use rAF. Keeping a 500k-row table
-responsive uses Workers (Ch 08). They become simple once you see them all as "register a callback and get
-notified."
-
----
-
-## Problem: polling is wasteful and janky
-
-The simple but bad way to do "load more when the user nears the bottom":
-
-```js
-window.addEventListener("scroll", () => {
-  const rect = sentinel.getBoundingClientRect();  // forces layout every scroll event (Ch 07!)
-  if (rect.top < window.innerHeight) loadMore();
-});
-```
-
-Scroll fires dozens of times a second, and `getBoundingClientRect()` forces synchronous layout
-each time (Ch 07 thrashing). You're polling geometry on the hot path. The browser already knows
-when elements enter the viewport. So let the browser tell you.
-
----
-
-## Engine Simulation: IntersectionObserver (infinite scroll)
-
-```js
-const io = new IntersectionObserver((entries) => {
-  for (const e of entries) if (e.isIntersecting) loadMore();   // browser calls us, no polling
-}, { rootMargin: "200px" });   // fire 200px early so data loads before the user hits bottom
-io.observe(sentinel);
-```
+## Visualization
 
 ```mermaid
 sequenceDiagram
@@ -87,128 +28,160 @@ sequenceDiagram
   participant CB as Your callback
   U->>B: scrolls toward bottom
   B->>B: tracks sentinel vs viewport efficiently
-  B->>CB: sentinel intersects (within rootMargin) → fire once
-  CB->>CB: loadMore() (fetch next page → Ch 10 cache)
+  B->>CB: sentinel intersects (within rootMargin), fire once
+  CB->>CB: loadMore() (fetch next page)
 ```
 
-No scroll handler. No layout-forcing reads. Fires only when it matters. This is the right
-infinite-scroll trigger for the contacts table (Ch 08). **ResizeObserver** is the same pattern
-for "react when an element's size changes" (responsive charts and virtualizer row measurement).
-It is better than a window `resize` listener because it works per element and fires on any cause.
-
----
-
-## Timing: rAF vs requestIdleCallback
-
-- **`requestAnimationFrame(cb)`** runs `cb` right before the next paint (Ch 07). Use for visual
-  updates and animations so they sync to the frame and batch together. Reading layout then writing in
-  rAF avoids thrashing.
-- **`requestIdleCallback(cb)`** runs `cb` when the main thread is idle. Use for low-priority,
-  non-visual work like prefetch and analytics. This way it does not compete with input and paint.
+Frame timing:
 
 ```
-frame:  [ input ] → [ rAF callbacks ] → [ style→layout→paint→composite ] → [ idle? → rIC ]
+frame: [ input ] -> [ rAF callbacks ] -> [ style -> layout -> paint -> composite ] -> [ idle? -> rIC ]
 ```
 
----
-
-## Web Workers: escape the one thread
-
-A 200ms sort or parse on the main thread freezes scroll and paint (Ch 02). Move it off the main thread:
+## Engine Simulation
 
 ```js
-// main.js
-const worker = new Worker("sort.js");
-worker.postMessage(bigArray);                 // structured-clone copy crosses the boundary
-worker.onmessage = (e) => render(e.data);     // result comes back; main thread stayed free
+const io = new IntersectionObserver((entries) => {
+  for (const e of entries) if (e.isIntersecting) loadMore();
+}, { rootMargin: "200px" });
+io.observe(sentinel);
+```
 
-// sort.js (separate thread, NO DOM access)
+No scroll handler. No layout-forcing reads. Fires only when it matters.
+
+Internally, IntersectionObserver uses the browser's compositor thread to track element positions. The compositor runs at frame rate and has access to the layer tree. It checks intersection without forcing layout on the main thread. This is why it is efficient. The callback fires asynchronously, after the compositor detects the intersection. The `rootMargin` option expands the root's bounding box by 200px. The callback fires when the sentinel enters that expanded area, giving you time to load data before the user reaches the bottom.
+
+```js
+const worker = new Worker("sort.js");
+worker.postMessage(bigArray);
+worker.onmessage = (e) => render(e.data);
+
+// sort.js
 onmessage = (e) => postMessage(heavySort(e.data));
 ```
 
-Workers have **no DOM** access. They communicate by message passing. Data is copied or transferred, not
-shared by reference (this is a Ch 01 mental shift). Use Workers for CPU-heavy work: parsing, sorting big datasets,
-crypto, and image processing. This is the "do it elsewhere" lever from Ch 08.
+Internally, `postMessage` uses the structured clone algorithm to copy data across threads. The data is serialized and deserialized. It is not shared by reference. Large objects have a serialization cost. For very large data you can use Transferable objects like ArrayBuffer which move ownership without copying. The old buffer becomes detached in the original thread. The worker runs on a separate OS thread with its own event loop and memory space. It has no access to the DOM, window, or document.
 
----
+## Internal Implementation
 
-## Storage & History (quick map)
+**IntersectionObserver:**
+- Constructor takes a callback and options object with `root` (default viewport), `rootMargin`, and `threshold`.
+- `rootMargin` expands or shrinks the root's bounding box for early triggering.
+- `threshold` is a number or array from 0 to 1 indicating what percentage of target must be visible.
+- Callback receives array of `IntersectionObserverEntry` objects with `isIntersecting`, `intersectionRatio`, `boundingClientRect`, `target`.
+- Must call `disconnect()` or `unobserve()` on unmount to prevent memory leaks.
+
+**ResizeObserver:**
+- Same pattern: create observer, pass callback, observe elements.
+- Callback receives entries with `contentRect` (element's content box size).
+- Fires when element size changes regardless of cause.
+- Better than window resize listeners because it works per element and catches all size changes.
+
+**requestAnimationFrame vs requestIdleCallback:**
+- `rAF` callbacks run in a queue before each paint. Browser schedules them to batch visual updates. They receive a high-resolution timestamp.
+- `requestIdleCallback` runs when the main thread has idle time. Receives a deadline object with `timeRemaining()`.
+- `rAF` is for visual updates. `requestIdleCallback` is for non-visible work like prefetch or analytics.
+
+**Web Worker:**
+- Runs in separate OS thread. No DOM access. No `window`, `document`, `parent`.
+- Communication via `postMessage` and `onmessage`.
+- Data is cloned, not shared (except Transferable objects like ArrayBuffer).
+- Workers can import scripts with `importScripts` or ES module imports (if type is module).
+
+**Storage tiers:**
 
 | API | Size | Lifetime | Sync? | Sent to server? |
 |---|---|---|---|---|
-| **localStorage** | ~5MB | until cleared | sync (blocks!) | no |
-| **sessionStorage** | ~5MB | per tab session | sync | no |
-| **IndexedDB** | large | persistent | **async** | no |
-| **Cookies** | ~4KB | configurable | sync | **yes, every request** (Ch 13/14) |
+| localStorage | about 5MB | until cleared | sync (blocks) | no |
+| sessionStorage | about 5MB | per tab session | sync | no |
+| IndexedDB | large | persistent | async | no |
+| Cookies | about 4KB | configurable | sync | yes, every request |
 
-- `localStorage` is synchronous. So do not put hot or large reads in render paths. Big or structured data should go to
-  **IndexedDB** (which is async). For tokens, think carefully (Ch 14 covers cookies vs storage tradeoffs).
-- **History API** (`pushState` and `popstate`) is how client routers like React Router change the URL
-  without a full page load. This is the basis of SPA routing (Ch 19).
+## Real World Example
 
----
+Infinite scroll in a contacts table. The bad way:
 
-## Interview Discussion (reason first)
+```js
+window.addEventListener("scroll", () => {
+  const rect = sentinel.getBoundingClientRect();
+  if (rect.top < window.innerHeight) loadMore();
+});
+```
 
-**Q1. "How do you trigger infinite-scroll loading?"**
-> "Use IntersectionObserver on a sentinel near the list bottom. Add a `rootMargin` so it loads early.
-> It beats a scroll handler because the browser tracks visibility efficiently. I avoid
-> `getBoundingClientRect` layout-thrashing on every scroll event (Ch 07)."
+This forces layout on every scroll event. The browser recalculates positions synchronously. If loadMore triggers a re-render with new data, the combined scroll handler plus re-render causes dropped frames.
 
-**Q2. "A 300ms data transform freezes the UI. What is the fix?"**
-> "Move it to a Web Worker. A Worker runs on a separate thread with message-passing and no DOM. The main thread stays free
-> for paint and input (Ch 02). If it must stay on the main thread, chunk it across frames or use a transition."
+The good way with IntersectionObserver:
 
-**Q3. "localStorage vs IndexedDB vs cookies?"**
-> "localStorage is small, synchronous, and not sent to the server. Good for simple key-value data. IndexedDB is
-> large and async. Good for structured and offline data. Cookies are tiny and sent on every request. Use for
-> server-read auth with SameSite and HttpOnly (Ch 14). I avoid synchronous localStorage in hot paths."
+```js
+useEffect(() => {
+  const io = new IntersectionObserver(([entry]) => {
+    if (entry.isIntersecting && hasMore && !isLoading) {
+      fetchNextPage();
+    }
+  }, { rootMargin: "400px" });
+  if (sentinelRef.current) io.observe(sentinelRef.current);
+  return () => io.disconnect();
+}, [hasMore, isLoading, fetchNextPage]);
+```
 
-*Scoring:* full = observer-not-polling + worker-for-CPU + storage-tier tradeoffs.
+Internally, the IntersectionObserver callback fires asynchronously. It does not block scroll. It does not force layout. The browser detects the intersection in the compositor thread. Your callback runs after detection during a frame's idle time or as a microtask. The fetchNextPage call is also async. The scroll stays smooth. The cleanup function calls `disconnect()` which tells the browser to stop tracking the sentinel element. This prevents memory leaks when the component unmounts.
 
----
+## Tradeoffs
+
+| API | Problem solved | Tradeoff |
+|---|---|---|
+| IntersectionObserver | Detect element visibility | Cannot detect exact scroll position values |
+| ResizeObserver | Detect element size changes | Fires synchronously before paint, can cause thrashing if you mutate layout |
+| requestAnimationFrame | Sync visual updates to paint | Not for non-visual work, runs even when tab is visible |
+| requestIdleCallback | Run work during idle | May never fire if thread is always busy |
+| Web Worker | Offload CPU work from main thread | No DOM access, serialization cost for messages, complexity |
+| localStorage | Small persistent key-value storage | Sync, blocks main thread, small size limit |
+| IndexedDB | Large structured data storage | Complex API, async but no callback blocking |
 
 ## Common Mistakes
 
-- **Scroll handlers doing `getBoundingClientRect`** instead of IntersectionObserver. This causes layout thrashing.
-- **Forgetting to `disconnect()` or `unobserve()`** observers on unmount. This causes memory leaks.
-- **Heavy work on the main thread** such as parsing or sorting big arrays instead of a Worker.
-- **Synchronous `localStorage` in render paths or for large blobs.** This blocks the main thread. Use IndexedDB.
-- **Using `setTimeout` for animation** instead of `requestAnimationFrame`.
+- Scroll handlers calling `getBoundingClientRect` instead of IntersectionObserver. This causes layout thrashing.
+- Forgetting to `disconnect()` or `unobserve()` observers on unmount. This causes memory leaks.
+- Heavy work on the main thread such as parsing or sorting big arrays instead of a Worker.
+- Synchronous `localStorage` in render paths or for large blobs. Use IndexedDB instead.
+- Using `setTimeout` for animation instead of `requestAnimationFrame`.
 
----
+## SDE-2 Interview Answer
 
-## Interview Questions
+**Mid-level variant:**
 
-1. Why is IntersectionObserver better than a scroll listener for lazy-loading? (Tie to Ch 07.)
-2. rAF vs requestIdleCallback. What runs in each and when?
-3. What can't a Web Worker do, and how does data cross the boundary?
-4. Map a token, a 50MB cache, and a user preference to the right storage and justify.
-5. How does a client-side router change the URL without reloading?
+"For infinite scroll I use IntersectionObserver on a sentinel element. The browser tells me when the element is visible. I do not poll with scroll handlers. For expensive computations like sorting a large array I move the work to a Web Worker. The worker runs on a separate thread. I communicate with it using postMessage. The main thread stays responsive for paint and input."
 
----
+**Senior variant:**
 
-## Homework
+"I choose the right observer or scheduler based on the problem. IntersectionObserver for visibility detection. ResizeObserver for element size changes. requestAnimationFrame for visual updates. requestIdleCallback for low-priority background work. I use Web Workers for any CPU-heavy task that would block the main thread. I avoid synchronous localStorage in render paths. I use IndexedDB for large or structured data because it is async. I clean up observers and workers in useEffect to prevent leaks."
 
-1. Implement infinite scroll with IntersectionObserver + `rootMargin`; remove a scroll handler
-   version and compare CPU in the Performance panel.
-2. Move a deliberately slow sort into a Web Worker; confirm the page stays scrollable during it.
-3. In `NOTES.md`: the observer pattern in one line + the storage-tier table from memory.
+**Engineering Lead variant:**
 
----
+"I set patterns for the team. Observers go in custom hooks with proper cleanup. The hooks accept callbacks and return the observer instance. Workers are wrapped in a messaging layer that handles serialization, errors, and lifecycle. We have a simple API: `workerRef.current.postMessage(data)` and listen for results. Storage choices are documented: cookies for auth with HttpOnly, IndexedDB for large cache data, localStorage for simple preferences. The team knows that synchronous storage in render paths is a performance bug."
 
-## Summary
+## Follow-up Questions
 
-- The platform gives **event-driven primitives so you do not poll or block**. Register a callback.
-  The browser fires it at the right time.
-- **IntersectionObserver** handles visibility and infinite scroll. **ResizeObserver** handles element size.
-  Both beat scroll and resize-listener math. They avoid layout thrashing (Ch 07).
-- **`rAF`** runs pre-paint visual updates. **`requestIdleCallback`** runs spare-time low-priority work.
-- **Web Workers** run heavy computation on another thread. They have no DOM and use message-passing.
-  The main thread stays responsive (Ch 02 and 08).
-- **Storage tiers** differ by size, lifetime, sync behavior, and whether data is sent to the server.
-  **History API** powers SPA routing (Ch 19).
+1. Why is IntersectionObserver better than a scroll listener for lazy-loading? What happens internally in each approach?
+2. rAF vs requestIdleCallback: what runs in each and when? What happens if the main thread is too busy for idle callbacks?
+3. What can a Web Worker not do? How does data cross the thread boundary? What is the cost of structured cloning?
+4. Map a token, a 50MB cache, and a user preference to the right storage. Justify each choice by size, lifetime, and security.
+5. How does a client-side router change the URL without reloading the page? (tie to History API, pushState, popstate)
 
-## Go deeper
-Ch 08 (these as perf levers), Ch 13/14 (cookies & token storage security), Ch 19 (History +
-routing). MDN's observer/worker pages are good references once the pattern is internalized.
+## Mental Trigger
+
+Do not poll. Register a callback. The browser tells you.
+
+## One Page Revision
+
+- Browser gives event-driven primitives so you never poll or block.
+- IntersectionObserver: browser tracks element visibility. No layout forcing.
+- ResizeObserver: detect element size changes per element, not window resize.
+- rAF: run callbacks right before paint. For visual updates only.
+- requestIdleCallback: run work during idle time. For low-priority non-visual work.
+- Web Worker: separate thread for CPU work. No DOM access. Message passing with postMessage.
+- Data crosses boundary via structured clone. Use Transferable for large ArrayBuffers.
+- localStorage: small sync storage. Do not use in render paths.
+- IndexedDB: large async storage. Use for structured data and cache.
+- Cookies: small, sent with every request. Use for server-read auth with HttpOnly.
+- Always disconnect observers and terminate workers on cleanup.

@@ -5,115 +5,50 @@ part: "Web Platform & Quality"
 description: "Cascade, specificity, flexbox, grid, stacking context"
 ---
 
+## Problem
 
-> **Prerequisites:** understanding of the browser render pipeline. This includes the layout and paint phases where the browser computes element positions, sizes, and stacking order.
+You write a CSS rule but it does not apply. Another rule wins and you do not know why. Your width says 100px but the box is 124px. Your z-index is 9999 but the element sits behind something else. These are not browser bugs. They are predictable outcomes of the CSS constraint solver. Most people fight them with `!important` or higher z-index values. Those are hacks, not fixes.
 
----
+## Why Existing Solution Failed
 
-## The one mental model
+The old approach was trial and error. Add `!important` until the rule sticks. Keep raising z-index until something shows on top. Use magic numbers for widths. This works temporarily and breaks later. It does not teach you why CSS behaves the way it does. The root causes, the cascade, the box model, and stacking contexts, stay unknown. Every new layout problem becomes a guessing game.
 
-> **CSS is a CONSTRAINT SOLVER. The browser computes each box by resolving a cascade of
-> constraints in order: which rule wins (the cascade and specificity), how big the box is (the box
-> model), where it flows (normal flow, flex, or grid), and who paints on top (stacking contexts).
-> Every CSS confusion like "why did this rule lose," "why is my width wrong," or "why won't z-index
-> work" happens because you and the solver disagree about one of those four resolutions.**
+## Mental Model
 
-From this you understand specificity outcomes, box-model surprises, how flex/grid place items, and
-the real reason z-index fails (a parent created a stacking context). No memorizing. You trace
-the solver.
+CSS is a CONSTRAINT SOLVER. The browser computes each box by resolving a cascade of constraints in order: which rule wins (the cascade and specificity), how big the box is (the box model), where it flows (normal flow, flex, or grid), and who paints on top (stacking contexts). Every CSS confusion like "why did this rule lose," "why is my width wrong," or "why won't z-index work" happens because you and the solver disagree about one of those four resolutions.
 
----
+## Visualization
 
-## Learning Objectives
-
-1. Resolve "which rule wins" via the cascade + specificity (derive, don't guess).
-2. Reason about the box model incl. `box-sizing` and margin collapse.
-3. Explain flexbox (1-D) vs grid (2-D) placement at a mental-model level.
-4. Explain **stacking contexts**. This is the actual reason z-index behaves "weirdly."
-
----
-
-## Key Mental Models
-
-- **Cascade order:** importance → specificity → source order. Higher wins.
-- **The box is `content + padding + border (+ margin outside)`**. `box-sizing` changes what
-  `width` measures.
-- **Flex = distribute space along ONE axis; Grid = place into a 2-D template.**
-- **z-index only compares within the SAME stacking context.** New contexts are created by many
-  common properties.
-
----
-
-## Introduction
-
-CSS feels random until you see the solver. At SDE-2 the CSS questions are "explain specificity,"
-"box-sizing," "center a thing," "flex vs grid," and the classic "z-index: 9999 and it is still
-behind something, why." All of these reduce to the constraint-resolution model.
-
----
-
-## Problem: the cascade and specificity
-
-Many rules can target one element. The browser needs a deterministic winner. The order:
+Cascade resolution order:
 
 ```
-1. Importance:   !important  >  normal declarations
+1. Importance:   !important > normal declarations
 2. Specificity:  inline(1,0,0,0) > #id(0,1,0,0) > .class/[attr]/:pseudo-class(0,0,1,0) > element/::pseudo-element(0,0,0,1)
 3. Source order: last matching rule wins ties
 ```
 
 ```mermaid
 flowchart TD
-  rules["all matching declarations for a property"] --> imp{!important?}
+  rules["all matching declarations for a property"] --> imp{!important}
   imp -->|one wins| done1[winner]
-  imp -->|tie/none| spec[compare specificity tuples]
+  imp -->|tie or none| spec[compare specificity tuples]
   spec -->|higher wins| done2[winner]
   spec -->|tie| order[later source order wins]
 ```
 
-Read specificity as a tuple `(inline, ids, classes, elements)`, compared left to right. `#nav a`
-= (0,1,0,1) beats `.menu .link a` = (0,0,2,1) because ids dominate classes. This is *why* your
-`.link` rule "lost." It is not random.
-
----
-
-## Box model & box-sizing
+Box model:
 
 ```
    ┌─────────── margin (outside, transparent) ───────────┐
-   │  ┌──────── border ────────┐                          │
-   │  │  ┌───── padding ─────┐ │                          │
-   │  │  │   content (w×h)   │ │                          │
-   │  │  └───────────────────┘ │                          │
-   │  └────────────────────────┘                          │
+   │  ┌──────── border ────────┐                         │
+   │  │  ┌───── padding ─────┐ │                         │
+   │  │  │   content (w x h)   │ │                         │
+   │  │  └───────────────────┘ │                         │
+   │  └────────────────────────┘                         │
    └──────────────────────────────────────────────────────┘
 ```
 
-- `box-sizing: content-box` (default): `width` equals content only. Padding and border add *on top*. So
-  the rendered box is wider than `width`. This is the source of "why is my 100px box 124px."
-- `box-sizing: border-box`: `width` includes padding and border. The box is exactly `width`. Most teams
-  set this globally. Understand the surprise instead of memorizing.
-- **Margin collapse:** adjacent vertical margins merge to the larger one (not the sum) in normal flow.
-  This is another "where did my spacing go" moment. Flex and grid items do not collapse margins.
-
----
-
-## Flexbox vs Grid (the placement model)
-
-- **Flexbox = one axis.** You have a row (or column) of items and distribute free space along it:
-  `justify-content` (main axis), `align-items` (cross axis), `flex: grow shrink basis` (how each
-  item takes/gives space). Use for toolbars, row of buttons, a centered thing.
-- **Grid = two axes.** You define a template of rows/columns and place items into cells:
-  `grid-template-columns`, `gap`, line-based placement. Use for page/section layouts, the
-  contacts table's column structure.
-
-Mental shortcut: *content-driven 1-D distribution → flex; layout-driven 2-D template → grid.*
-Centering: `display:flex; align-items:center; justify-content:center` (or `display:grid;
-place-items:center`).
-
----
-
-## Engine Simulation: why z-index "fails"
+## Engine Simulation
 
 ```html
 <div style="position: relative; z-index: 1; opacity: 0.99;">
@@ -122,84 +57,110 @@ place-items:center`).
 <div style="position: relative; z-index: 2;">B</div>
 ```
 
-`A` has `z-index: 9999` but renders **behind** `B` (z-index 2). Why? `A`'s z-index only competes
-*within its parent's stacking context*. The parent created a stacking context (via `opacity < 1`
-plus positioned z-index). The whole parent subtree is ordered as one unit at the parent's level
-(z-index 1). That level is below `B` (z-index 2). `A`'s 9999 is meaningless across contexts.
+A has z-index 9999 but renders BEHIND B (z-index 2). Why? A's z-index only competes within its parent's stacking context. The parent created a stacking context via `opacity less than 1` plus positioned z-index. The whole parent subtree is ordered as one unit at the parent's level (z-index 1). That level is below B (z-index 2). A's 9999 is meaningless across contexts.
 
+Internally, the browser maintains a stacking context tree during the paint phase. Each stacking context has its own z-index ordering. Elements inside a context are sorted and painted relative to each other, but the entire context is treated as a single unit by the parent context. This is why raising the z-index on a child does nothing if the parent is below another element. The paint order is computed after layout. The browser walks the stacking context tree from back to front, painting each context's contents as a group.
+
+## Internal Implementation
+
+The cascade algorithm in the browser:
+
+1. Collect all declarations that match the element.
+2. Sort by importance. `!important` declarations beat normal ones.
+3. Sort by specificity as a tuple `(inline, ids, classes, elements)`. Compare left to right. `#nav a` equals `(0,1,0,1)`. `.menu .link a` equals `(0,0,2,1)`. The first tuple wins because ids column is higher.
+4. If specificity is equal, the declaration that appears later in source order wins.
+
+The box model computation:
+
+- `box-sizing: content-box` (default): `width` sets the content area width. Padding and border add on top. A 100px width with 10px padding and 2px border becomes 124px total (100 + 10*2 + 2*2).
+- `box-sizing: border-box`: `width` includes padding and border. The same element stays exactly 100px. Content area shrinks to 76px (100 minus 10*2 minus 2*2).
+
+Margin collapse: adjacent vertical margins in normal flow merge to the larger value. Two boxes with 20px and 30px margins have a 30px gap, not 50px. This happens during layout when the browser computes the box's margin edge. Flex and grid items do not collapse margins because they establish new formatting contexts.
+
+Stacking context creation: the browser creates a new stacking context for certain properties. This includes `opacity less than 1`, `transform`, `filter`, `will-change`, `position: fixed/sticky`, a positioned element with a z-index, and `isolation: isolate`. The context isolates its children from the parent stacking order.
+
+Flexbox layout: the browser distributes space along one axis. It checks `flex-direction` to determine the main axis. It places items according to `justify-content` (main axis) and `align-items` (cross axis). Each item's `flex: grow shrink basis` determines how it takes or gives space. The algorithm subtracts the total basis from available space, then distributes the remainder proportionally by grow factors.
+
+Grid layout: the browser creates a grid of rows and columns from the template definitions. It places items into cells using line-based placement or auto-placement. The algorithm computes column widths and row heights from the template, gaps, and content.
+
+## Real World Example
+
+A navigation bar with a dropdown menu. The nav has `position: relative; z-index: 10`. The dropdown has `position: absolute; z-index: 9999`. A modal overlay appears with `position: fixed; z-index: 100`. The dropdown appears behind the overlay even though its z-index is higher.
+
+The fix: understand stacking contexts. The dropdown's z-index is only meaningful inside the nav's stacking context. The modal creates a new stacking context at the root level.
+
+```css
+/* Problem: dropdown behind modal */
+.nav { position: relative; z-index: 10; }
+.dropdown { position: absolute; z-index: 9999; }
+.modal-overlay { position: fixed; z-index: 100; }
+
+/* Fix: modal must be above nav context */
+.modal-overlay { position: fixed; z-index: 1000; }
+/* Or remove the stacking context from nav */
+.nav { position: relative; /* no z-index */ }
+/* Or use isolation to create a fresh stacking context for modal */
+.modal-overlay { isolation: isolate; z-index: 100; }
 ```
-stacking order at root:   [parent context z=1  (contains A:9999)]  <  [B z=2]
-                           └ A is sealed inside here, can't escape to beat B
-```
 
-**Things that create a new stacking context** (the "z-index won't work" culprits): `opacity < 1`,
-`transform`, `filter`, `will-change`, `position: fixed/sticky`, a positioned element with a
-`z-index`, and `isolation: isolate`. When z-index does not behave as expected, look for the ancestor that made a context.
+Internally, when the browser paints, it creates a paint order list. Elements without a stacking context are painted in standard CSS order: background, borders, positioned descendants. Elements with a stacking context are painted as a group at their position in the parent's paint order. The z-index values only sort elements within the same context.
 
----
+## Tradeoffs
 
-## Interview Discussion (reason first)
-
-**Q1. "Why did my `.btn` color lose to another rule?"**
-> "Cascade resolution: compare `!important`, then specificity tuples (ids beat classes beat elements),
-> then source order. The winning rule had higher specificity. For example, an id or inline style beat
-> a class. It is not random. I would inspect computed styles to see the winner."
-
-**Q2. "My element has z-index 9999 but sits behind another. Why?"**
-> "z-index only orders siblings within the *same stacking context*. An ancestor probably created
-> a new stacking context (opacity less than 1, transform, positioned plus z-index, and so on). That
-> seals my element's z-index inside it. The fix is changing where the context boundary is, not raising the number."
-
-**Q3. "content-box vs border-box?"**
-> "`content-box` (default): `width` is content only. Padding and border add to the visible size.
-> `border-box`: `width` includes padding and border. The box is exactly that wide. It is predictable,
-> so most projects set it globally."
-
-*Scoring:* full = cascade tuple + stacking-context cause + box-sizing semantics. Fail = "use
-!important or bump z-index higher."
-
----
+| Approach | When to use | Cost |
+|---|---|---|
+| Specificity with low-specificity selectors | Maintainable, easy to override | More classes in markup |
+| Specificity with `!important` | Quick emergency fix | Hard to override later, breaks cascade |
+| `content-box` | When you need exact content sizing | Box renders wider than width |
+| `border-box` | Most layouts, predictable sizing | Content shrinks to accommodate border |
+| Flexbox | 1-D layouts, content-driven distribution | Wrong tool for 2-D grids |
+| Grid | 2-D layouts, template-driven placement | Overkill for simple rows |
+| Single stacking context | Simple z-index management | Cannot isolate complex widgets |
+| Multiple stacking contexts | Isolate component paint order | Children cannot escape their context |
 
 ## Common Mistakes
 
-- **Fighting specificity with `!important`** instead of lowering selector specificity.
-- **Bumping z-index higher** when the real problem is a stacking context boundary.
-- **Forgetting `box-sizing: border-box`** and being surprised by widths.
-- **Expecting vertical margins to add.** They collapse in normal flow.
-- **Using flex for 2-D grids** (or grid for a simple row). Pick by axis count.
+- Fighting specificity with `!important` instead of lowering selector specificity.
+- Bumping z-index higher when the real problem is a stacking context boundary.
+- Forgetting `box-sizing: border-box` and being surprised by rendered widths.
+- Expecting vertical margins to add in normal flow. They collapse to the larger value.
+- Using flex for 2-D grids or grid for a simple row. Pick by axis count.
+- Creating a stacking context unintentionally with `opacity less than 1`, `transform`, or `filter`.
 
----
+## SDE-2 Interview Answer
 
-## Interview Questions
+**Mid-level variant:**
 
-1. Rank these by specificity: `#a .b`, `.b .c .d`, `li`, inline style. Explain the tuple compare.
-2. A 200px `width` box looks 232px wide. Why? Give two fixes.
-3. Explain a real z-index failure via stacking contexts; name 3 context-creating properties.
-4. When flex vs grid? Center a box two ways.
-5. Why do margins collapse, and when don't they?
+"CSS is a constraint solver with four steps: cascade, box model, layout mode, and stacking context. When a rule does not apply I compare specificity as a tuple: inline, id, class, element. The higher tuple wins. If tied, the later rule wins. When a width surprises me I check `box-sizing`. The default `content-box` adds padding and border on top. When z-index fails I look for a parent with `opacity less than 1` or `transform` that creates a stacking context. The child's z-index is sealed inside that context."
 
----
+**Senior variant:**
 
-## Homework
+"I design CSS systems that minimize specificity battles. I use BEM or similar naming conventions to keep specificity flat. I set `box-sizing: border-box` globally so width means what I expect. I use flex for 1-D layouts and grid for 2-D layouts. I avoid `!important` except for utility classes. When z-index fails I trace the stacking context tree in DevTools instead of raising the number. I teach the team the cascade tuple model so they stop guessing."
 
-1. Build a z-index failure on purpose (wrap a high-z child in an `opacity:0.99` parent), then fix
-   it by removing the context. Inspect in DevTools' Layers panel.
-2. Toggle `box-sizing` on a padded/bordered box and measure the rendered width both ways.
-3. In `NOTES.md`: the cascade order, the specificity tuple, and the z-index rule in 3 lines.
+**Engineering Lead variant:**
 
----
+"I establish CSS conventions for the team. We use a consistent methodology like BEM or CSS Modules for scoping. We set `box-sizing: border-box` globally. We avoid `!important` and deep nesting. We use design tokens for colors and spacing instead of hard-coded values. The team knows the cascade resolution order. They know how stacking contexts work. They inspect computed styles and the Layers panel instead of guessing. A rule using `!important` needs a comment explaining why."
 
-## Summary
+## Follow-up Questions
 
-- **CSS is a constraint solver.** It resolves which rule wins (cascade: importance, then specificity
-  tuple, then source order), the box size (box model plus `box-sizing`), the flow (normal, flex, or grid),
-  and stacking (contexts).
-- **Specificity** is a tuple `(inline, id, class, element)` compared left to right.
-- **`border-box`** makes `width` include padding and border. Vertical **margins collapse** in normal flow.
-- **Flex = 1-D distribution. Grid = 2-D template.**
-- **z-index only compares within a stacking context.** Ancestors with `opacity` less than 1, `transform`,
-  or positioned plus z-index create contexts that seal children. This is the real reason z-index fails.
+1. Rank these by specificity: `#a .b`, `.b .c .d`, `li`, inline style. Compare the tuple for each.
+2. A 200px width box looks 232px wide. Why? Give two fixes using `box-sizing`.
+3. Explain a real z-index failure using stacking contexts. Name three properties that create a new context.
+4. When do you use flex vs grid? Center a box both ways and explain the difference.
+5. Why do vertical margins collapse in normal flow but not in flex or grid? What happens during layout?
 
-## Go deeper
-Ch 07 is the pipeline this feeds; Ch 23 (a11y) builds on semantic elements. Josh Comeau's CSS
-writing is the best practice ground once this model is solid.
+## Mental Trigger
+
+CSS is a constraint solver, not a guessing game.
+
+## One Page Revision
+
+- CSS resolves rules in order: importance, specificity tuple, source order.
+- Specificity tuple: (inline, id, class, element). Compare left to right.
+- `box-sizing: border-box` makes width include padding and border.
+- Vertical margins collapse in normal flow (merge to larger value).
+- Flex is 1-D distribution. Grid is 2-D template.
+- z-index only compares within the same stacking context.
+- Stacking contexts created by `opacity less than 1`, `transform`, `filter`, `will-change`, `position: fixed/sticky`, positioned element with z-index, `isolation: isolate`.
+- When z-index fails, find the ancestor that created a context. Do not raise the number.
+- Use `border-box` globally. Keep specificity flat. Avoid `!important`.

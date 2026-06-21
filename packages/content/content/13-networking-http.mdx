@@ -5,99 +5,43 @@ part: "Networking & Security"
 description: "HTTP/1.1·2·3, caching, CORS, WebSockets, CDN"
 ---
 
+> Prerequisites: `fetch` API, async/await, Promise (Ch 02); stale-while-revalidate caching model (Ch 10). The JD asks you to "collaborate with backend to resolve ambiguity." That means knowing the wire.
 
-> Prerequisites: `fetch` API, async/await, Promise (Ch 02); stale-while-revalidate caching model (Ch 10). The JD asks you to "collaborate with
-> backend to resolve ambiguity." That means knowing the wire.
+## Problem
 
----
+Your app loads slowly. Images take too long. API calls queue up behind each other. You open DevTools and see six connections doing one request at a time. A slow request blocks the ones behind it. The browser cannot reuse the connection efficiently. Meanwhile, the same data fetches repeatedly because nothing is cached. Cross-origin API calls fail mysteriously. You do not understand why.
 
-## The one mental model
+## Why Existing Solution Failed
 
-> **A network request is a typed MESSAGE (method + URL + headers + body) sent over a CONNECTION,
-> answered with a typed response (status + headers + body). Almost every networking topic is an
-> optimization of one of two things: reuse the expensive CONNECTION (HTTP/1.1 keep-alive → HTTP/2
-> multiplexing → HTTP/3 over QUIC), or avoid the request entirely with CACHING (headers that say
-> "reuse this for N seconds" or "ask if it changed"). Security (CORS, cookies) is the browser
-> adding rules about WHO may send WHAT to WHOM.**
+HTTP/1.1 opened one request per connection. To load many assets, browsers opened up to six parallel connections per origin. But each connection still handled one request at a time. Head-of-line blocking meant a slow response delayed everything behind it on that connection. No multiplexing. No server push. No prioritization. Every request meant a fresh or reused TCP connection, but still serial.
 
-From "message over a connection, optimized by reuse + caching" you can understand why HTTP/2 fixed
-head-of-line blocking, what cache headers mean, why CORS preflights, and how cookies/JWT auth
-flow. No memorizing header lists. You reason about reuse and freshness.
+Without caching headers, every page load re-downloaded the same assets. Without CORS, cross-origin API calls failed with cryptic errors. Without understanding the request-response structure, debugging network issues was guesswork.
 
----
+## Mental Model
 
-## Learning Objectives
+A network request is a typed message (method + URL + headers + body) sent over a connection, answered with a typed response (status + headers + body). Almost every networking topic is an optimization of one of two things: reuse the expensive connection (HTTP/1.1 keep-alive to HTTP/2 multiplexing to HTTP/3 over QUIC), or avoid the request entirely with caching (headers that say "reuse this for N seconds" or "ask if it changed"). Security (CORS, cookies) is the browser adding rules about who may send what to whom.
 
-1. Read a request/response as method+headers+body / status+headers+body; know key status classes.
-2. Explain HTTP/1.1 vs 2 vs 3 as connection-reuse improvements.
-3. Explain caching headers (`Cache-Control`, `ETag`) as freshness vs revalidation.
-4. Explain CORS, cookies (SameSite/HttpOnly), and JWT vs session auth at a flow level.
+From "message over a connection, optimized by reuse plus caching" you can understand why HTTP/2 fixed head-of-line blocking, what cache headers mean, why CORS preflights exist, and how cookies and JWT auth flow. No memorizing header lists. You reason about reuse and freshness.
 
----
+## Visualization
 
-## Key Mental Models
-
-- **Request = method + URL + headers + body.** Method conveys intent (GET read, POST create…).
-- **Connection reuse** is the perf story: 1.1 keep-alive → 2 multiplexing → 3 QUIC/UDP.
-- **Caching** = "don't ask again": `max-age` (fresh window) + `ETag`/`If-None-Match` (revalidate).
-- **CORS** is the browser enforcing the same-origin policy with the server's permission headers.
-
----
-
-## Introduction
-
-Frontend interviews often ask about the network. The slow part of most apps is the
-wire, not React. You will be asked "what happens when you type a URL," "explain CORS," "how does
-caching work," and "session vs JWT." All these topics come from the message/connection/cache model.
-
----
-
-## Problem & request anatomy
-
-```
-REQUEST                                  RESPONSE
-GET /contacts?page=2 HTTP/2              HTTP/2 200 OK
-Host: app.a product company.com                Content-Type: application/json
-Accept: application/json                Cache-Control: max-age=60
-Authorization: Bearer <token>           ETag: "ab12"
-Cookie: session=...                      <body: JSON>
-(no body for GET)
-```
-
-- **Methods:** GET (read, cacheable, no body), POST (create/side-effects), PUT/PATCH (update),
-  DELETE. "Safe" means no side effects (GET/HEAD). "Idempotent" means the same result if repeated (GET, PUT,
-  DELETE, but not POST).
-- **Status classes:** 2xx ok (200, 201, 204), 3xx redirect/cache (301, 304 Not-Modified),
-  4xx client error (400, 401 unauth, 403 forbidden, 404, 429 rate-limit), 5xx server error.
-
----
-
-## Connection reuse: HTTP/1.1 → 2 → 3
+Connection reuse evolution:
 
 ```mermaid
 flowchart TB
   subgraph h1["HTTP/1.1"]
-    a["1 request at a time per connection<br/>(keep-alive reuses the TCP conn,<br/>but responses queue — head-of-line blocking)"]
+    a["1 request at a time per connection. Keep-alive reuses the TCP conn but responses queue. Head-of-line blocking."]
   end
   subgraph h2["HTTP/2"]
-    b["MULTIPLEXING: many streams over ONE TCP conn<br/>+ header compression + server push<br/>(fixes HTTP-level head-of-line blocking)"]
+    b["Multiplexing: many streams over one TCP connection. Header compression. Server push. Fixes HTTP-level head-of-line blocking."]
   end
   subgraph h3["HTTP/3"]
-    c["runs over QUIC (UDP), not TCP<br/>→ removes TCP-level head-of-line blocking,<br/>faster connection setup"]
+    c["Runs over QUIC (UDP), not TCP. Removes TCP-level head-of-line blocking. Faster connection setup."]
   end
   h1 --> h2 --> h3
 ```
 
-- **1.1**: persistent connections (keep-alive) avoid re-handshaking, but a slow response blocks
-  the ones behind it on that connection (head-of-line blocking) → browsers opened ~6 connections.
-- **2**: multiplex many concurrent streams over one connection + compress headers. Fixes HTTP-
-  level HOL, but a lost TCP packet still stalls all streams (TCP-level HOL).
-- **3**: QUIC over UDP gives independent streams, so packet loss on one doesn't stall others, plus
-  faster (0/1-RTT) setup.
-
----
-
-## Caching: don't ask again
+Cache revalidation flow:
 
 ```mermaid
 sequenceDiagram
@@ -106,128 +50,98 @@ sequenceDiagram
   Note over B: 1st request
   B->>S: GET /logo.png
   S-->>B: 200 + Cache-Control: max-age=3600 + ETag "x1"
-  Note over B: within 3600s → serve from cache, NO request (fresh)
-  Note over B: after 3600s → revalidate
-  B->>S: GET /logo.png  If-None-Match: "x1"
-  S-->>B: 304 Not Modified (no body) → reuse cached copy
+  Note over B: within 3600s, serve from cache. No request. Fresh.
+  Note over B: after 3600s, revalidate
+  B->>S: GET /logo.png If-None-Match: "x1"
+  S-->>B: 304 Not Modified (no body). Reuse cached copy.
 ```
 
-- **`Cache-Control: max-age=N`** means the response is fresh for N seconds. The browser serves it from cache with no network request. `no-store`
-  means never cache. `no-cache` means cache but always revalidate first. `immutable` means the resource never changes and never revalidates.
-- **Revalidation:** when the cached response is stale, the browser sends `If-None-Match: <ETag>` (or `If-Modified-Since`). The server
-  replies with **304** (reuse the cached copy, no body) or 200 with fresh data. This is the same stale-while-revalidate
-  idea that TanStack Query (Ch 10) uses at the app layer.
-- **CDN** = cache copies near users (edge) so requests don't travel to origin.
-
----
-
-## CORS: the browser's cross-origin rules
-
-Same-origin policy: by default JS can't read responses from a *different origin* (scheme+host+
-port). CORS is how a server **opts in** to allow it.
+CORS preflight:
 
 ```mermaid
 sequenceDiagram
   participant B as Browser (app.com)
   participant S as api.other.com
-  Note over B: "non-simple" request (custom headers / PUT / JSON+auth)
-  B->>S: OPTIONS (preflight): Access-Control-Request-Method/Headers
+  Note over B: "non-simple" request. Custom headers/PUT/JSON+auth
+  B->>S: OPTIONS (preflight). Access-Control-Request-Method/Headers
   S-->>B: 200 + Access-Control-Allow-Origin: app.com + Allow-Methods/Headers
   B->>S: actual request (only if preflight allowed it)
   S-->>B: response + Access-Control-Allow-Origin
 ```
 
-- **Preflight** (`OPTIONS`) happens for non-simple requests. These are requests with methods beyond GET/POST, custom
-  headers, or JSON content-type. The browser asks "am I allowed?" before sending the real request.
-- CORS is enforced **by the browser** when reading responses. It is not server-side security.
-  A non-browser client ignores CORS entirely. This is a common interview clarification.
+## Engine Simulation
 
----
+Trace what happens when a browser requests an image at https://example.com/logo.png for the first time.
 
-## Auth flows: cookies/sessions vs JWT
+The browser checks its HTTP cache. Cache miss. It opens a TCP connection to example.com:443. TLS handshake negotiates encryption. The browser sends an HTTP request: GET /logo.png with headers like Accept and User-Agent. The server receives the request. It checks the file system for logo.png. Found. It sends back a response: 200 OK with Content-Type: image/png, Cache-Control: max-age=3600, ETag: "abc123", and the image bytes. The browser stores the response in its HTTP cache keyed by the URL.
 
-- **Session cookie:** server stores session state, sends a `Set-Cookie`; browser auto-sends it on
-  every same-site request. Stateful (server must look it up), easy to revoke. Secure it with
-  `HttpOnly` (JS can't read it → XSS-safe), `Secure` (HTTPS only), `SameSite` (CSRF defense,
-  Ch 14).
-- **JWT (token):** server signs a token containing claims; client stores and sends it
-  (`Authorization: Bearer`). Stateless (server verifies the signature, no lookup), scales well,
-  but hard to revoke before expiry → use short-lived access tokens + refresh tokens.
-- **Where to store a JWT?** (Ch 14 covers the tradeoff.) `localStorage` is XSS-readable;
-  `HttpOnly` cookie is XSS-safe but needs CSRF protection. There's no free lunch.
+The browser parses the HTML and sees the same logo.png on the next page. It checks the cache. Cache hit. The response is still fresh (within 3600 seconds). The browser uses the cached copy. No network request. Zero milliseconds.
 
-**Real-time:** **WebSocket** = persistent bidirectional connection (chat, live updates);
-**SSE** (Server-Sent Events) = one-way server→client stream over HTTP (simpler, auto-reconnect);
-**polling** = repeated requests (simple, wasteful). The contacts table's real-time status (Ch 08)
-would use WS or SSE.
+An hour later, the browser needs logo.png again. Cache hit but stale. The browser sends a conditional request: GET /logo.png with If-None-Match: "abc123". The server checks if the file changed. It has not. The server responds with 304 Not Modified (empty body, 20 bytes instead of 20KB). The browser uses the cached copy. This is revalidation.
 
----
+## Internal Implementation
 
-## Interview Discussion (reason first)
+The browser maintains an HTTP cache on disk. Each cached response is stored with its URL, cached headers, and a freshness lifetime. When a request is made, the browser checks if the URL exists in the cache. If it exists and is still fresh (current time minus Date header is less than max-age), the response is served from cache with status 200 (from disk cache). No network request.
 
-**Q1. "What does HTTP/2 improve over 1.1?"**
-> "Multiplexing: many concurrent streams over one TCP connection, so requests don't queue behind
-> each other (fixes HTTP-level head-of-line blocking), plus header compression. 1.1 reused the
-> connection (keep-alive) but served responses serially. HTTP/3 goes further with QUIC over UDP to
-> kill TCP-level HOL and speed up setup."
+If the response is stale but has an ETag or Last-Modified, the browser sends a conditional GET. The server can respond with 304 (not modified) and no body, saving bandwidth. If the response has no-store, the browser never caches it. If it has no-cache, the browser caches it but always revalidates before use.
 
-**Q2. "Explain CORS and preflight."**
-> "Same-origin policy blocks JS from reading cross-origin responses unless the server opts in via
-> `Access-Control-Allow-*` headers. For non-simple requests the browser first sends an OPTIONS
-> preflight to check it's allowed. The browser enforces CORS for response reading. It is not a server
-> firewall."
+CDNs work the same way but at the edge. A CDN node receives a request, checks its cache, serves if fresh, or forwards to origin. This places cached copies near users geographically.
 
-**Q3. "Session vs JWT?"**
-> "Sessions are stateful (server stores them, easy to revoke, cookie auto-sent); JWTs are
-> stateless (signed claims, server just verifies, scales, but hard to revoke. So use short access +
-> refresh tokens). Cookie storage with HttpOnly+SameSite is safer against XSS than localStorage."
+## Real World Example
 
-*Scoring:* full = multiplexing/HOL + browser-enforced CORS + stateful-vs-stateless auth.
+Interviewer's contacts app loads a JSON payload of contacts, profile images, and static JS bundles. Without caching, every page navigation re-downloads everything. The app feels slow. The solution:
 
----
+Static assets (JS, CSS, images) get Cache-Control: max-age=31536000 with a content hash in the filename. They never need revalidation. The browser loads them once and keeps them for a year. The API response for contacts gets Cache-Control: max-age=60 and ETag. The browser caches it for 60 seconds. After 60 seconds, it revalidates with If-None-Match. If the contacts have not changed, the server returns 304 and the browser uses the cached copy. This saves bandwidth and speeds up re-renders.
+
+The app also calls a cross-origin API at api.other.com. The browser blocks the response because of same-origin policy. The fix: the server sends Access-Control-Allow-Origin: https://app.com. For non-simple requests (PUT with JSON body), the browser sends an OPTIONS preflight first. The server must respond with the correct CORS headers. Understanding this flow lets the frontend engineer debug CORS issues without waiting for backend support.
+
+## Tradeoffs
+
+HTTP/2 vs HTTP/3. HTTP/2 multiplexes many streams over one TCP connection. This fixes HTTP-level head-of-line blocking. But TCP-level head-of-line blocking remains: one lost packet stalls all streams because TCP delivers in order. HTTP/3 uses QUIC over UDP. Each stream is independent. Packet loss on one stream does not affect others. QUIC also has faster connection setup (0-RTT vs 1-2 round trips for TCP+TLS). The tradeoff: HTTP/3 requires QUIC support on server and client. Most modern browsers and CDNs support it, but some enterprise networks block UDP.
+
+Cache-Control: max-age vs ETag/304. max-age avoids network entirely during the freshness window. ETag/304 still makes a request but avoids downloading the body. max-age saves more bandwidth but risks serving stale content. ETag stays fresh but costs a round trip. Use max-age for assets that change infrequently and are OK being slightly stale. Use ETag for content where freshness matters more than speed.
+
+CORS preflight adds an extra round trip for non-simple requests. This increases latency. To avoid it, keep requests simple (GET/POST with standard headers and form-encoded body) when possible. But if you need custom headers or JSON content-type, the preflight is unavoidable.
 
 ## Common Mistakes
 
-- **Thinking CORS is server security.** In reality, the browser enforces CORS for response-read protection.
-- **Confusing `no-cache` (revalidate) with `no-store` (never cache).**
-- **Storing JWTs in localStorage** without acknowledging XSS exposure (Ch 14).
-- **Polling when SSE/WebSocket fits.** Polling wastes requests and battery.
-- **Assuming GET can have side effects.** GET should be safe and cacheable.
+- Thinking CORS is server security. The browser enforces CORS for response-read protection. It is not a server firewall.
+- Confusing no-cache (must revalidate) with no-store (never cache anything).
+- Storing JWTs in localStorage without acknowledging XSS exposure (Ch 14).
+- Polling when SSE or WebSocket fits. Polling wastes requests and battery.
+- Assuming GET can have side effects. GET should be safe and cacheable.
 
----
+## SDE-2 Interview Answer
 
-## Interview Questions
+**Mid-level variant:**
+"HTTP/1.1 handled one request at a time per connection. HTTP/2 multiplexes many requests over one connection. This fixes head-of-line blocking at the HTTP level. HTTP/3 uses QUIC over UDP to fix TCP-level head-of-line blocking. Caching avoids requests entirely through cache headers. CORS is the browser enforcing that cross-origin responses are only read if the server permits it. Sessions are stateful auth on the server. JWTs are stateless token auth."
+
+**Senior variant:**
+"I reason about the network as messages over connections, optimized by reuse and caching. HTTP/1.1 reused connections but served serially. HTTP/2 multiplexed streams over one connection but lost packets stalled everything. HTTP/3 gives independent streams over QUIC. For caching, I use max-age for long-lived assets with content hashes and ETag for API responses that need freshness. CORS is browser-enforced, not server security. I distinguish sessions (stateful, revokable) from JWTs (stateless, scalable, hard to revoke). The token storage tradeoff is between XSS exposure (localStorage) and CSRF vulnerability (automatic cookies)."
+
+**Engineering Lead variant:**
+"I ensure the team understands the wire so they can debug network issues independently. We use content hashes in filenames for aggressive static asset caching. API responses get appropriate Cache-Control and ETag headers coordinated with the backend team. CORS configuration is documented so new endpoints follow the same pattern. For auth, we standardize on HttpOnly+Secure+SameSite cookies for session tokens to minimize XSS risk, and we document the tradeoffs explicitly. The team knows when to use WebSocket vs SSE vs polling based on connection direction and reliability needs."
+
+## Follow-up Questions
 
 1. Walk "what happens when you fetch /contacts" from DNS to rendered. Name caching and connection at each step.
-2. HTTP/1.1 vs 2 vs 3. What HOL problem does each version address?
+
+2. HTTP/1.1 vs 2 vs 3. What head-of-line blocking problem does each version address?
+
 3. Draw the CORS preflight. What triggers it and who enforces it?
-4. `Cache-Control: max-age` vs `ETag`/304. How do they work together?
+
+4. Cache-Control: max-age vs ETag/304. How do they work together?
+
 5. Session vs JWT. Where would you store the token and what is the tradeoff?
 
----
+## Mental Trigger
 
-## Homework
+Network = message over connection, optimized by reuse and caching.
 
-1. In DevTools Network: find a 304, read `Cache-Control`/`ETag` on a static asset, and watch a
-   CORS preflight (`OPTIONS`) on a cross-origin API call.
-2. Compare HTTP/2 vs 1.1 waterfall for a page with many small assets (Protocol column).
-3. In `NOTES.md`: write the connection-reuse ladder (1.1 to 2 to 3), cache vs revalidate, and session vs JWT. One
-   line each.
+## One Page Revision
 
----
-
-## Summary
-
-- A request is a **message (method+headers+body)** over a **connection**, with a typed response.
-- **Connection reuse** is the perf arc: 1.1 keep-alive (serial) → 2 multiplexing (fixes HTTP HOL)
-  → 3 QUIC/UDP (fixes TCP HOL + faster setup).
-- **Caching** avoids requests: `Cache-Control: max-age` (fresh window) + `ETag`/304 (revalidate). This is the
-  wire-level version of stale-while-revalidate (Ch 10). CDNs cache copies at the edge.
-- **CORS** is the browser enforcing same-origin policy. The server sends opt-in headers, and a preflight happens for
-  non-simple requests. CORS is not server-side security.
-- **Auth:** sessions (stateful, revocable, cookie) vs JWT (stateless, scalable, short-lived +
-  refresh); cookie `HttpOnly`/`SameSite` matter for XSS/CSRF (Ch 14). Real-time: WS / SSE / poll.
-
-## Go deeper
-Ch 14 (security: where these headers defend XSS/CSRF), Ch 10 (app-level caching). MDN's HTTP
-docs are the reference once this model is solid.
+- Request = method + URL + headers + body. Response = status + headers + body. Method conveys intent.
+- Connection reuse is the performance story: 1.1 keep-alive (serial) to 2 multiplexing (fixes HTTP HOL) to 3 QUIC/UDP (fixes TCP HOL, faster setup).
+- Caching avoids requests. Cache-Control: max-age sets fresh window. ETag/304 does conditional revalidation. This is stale-while-revalidate at the wire level. CDNs cache at the edge.
+- CORS is the browser enforcing same-origin policy. Server sends opt-in headers. Preflight (OPTIONS) happens for non-simple requests. CORS is not server-side security.
+- Auth: sessions (stateful, revocable, cookie) vs JWT (stateless, scalable, short-lived plus refresh). Cookie HttpOnly/SameSite matter for XSS/CSRF. Real-time: WebSocket, SSE, or polling.

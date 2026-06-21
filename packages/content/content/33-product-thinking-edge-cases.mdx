@@ -5,58 +5,19 @@ part: "Tooling & Workflow"
 description: "Four states, double-submit, optimistic updates, offline"
 ---
 
+## Problem
 
-> Prerequisites: performance optimization (lazy loading, code splitting, React.memo, useMemo, useCallback), data fetching patterns (loading states, retry logic, stale-while-revalidate via TanStack Query), architecture tradeoffs (client vs server rendering, state management decisions), and error handling (try/catch, error boundaries, user-facing error messages, logging/reporting strategies).
-> The JD repeatedly says "think about special cases, loading
-> states, micro-interactions, and accessibility." This chapter turns that product instinct
-> into a repeatable framework.
+Users do unexpected things. They double-click buttons, submit forms while offline, type search queries faster than the network can respond, and navigate away before the page loads. Most UIs only handle the happy path. When users deviate, they see blank screens, frozen buttons, or duplicate records. These bugs erode trust.
 
----
+## Why Existing Solution Failed
 
-## The one mental model
+Developers code the success path first. They test with fast networks, single clicks, and perfect data. Then they ship. The edge cases surface in production. Users report bugs. The team scrambles to add loading states, error handling, and retry logic after the fact. Edge-case thinking is treated as polish, not a core requirement.
 
-> **Every user action has a lifecycle: INTENT → FLIGHT → RESULT. Product thinking means**
-> **designing for ALL three phases, not just the happy path. Intent is what the user sees**
-> **before acting (skeleton, placeholder). Flight is what happens during the action (loading,**
-> **optimistic UI, progress). Result is what the user sees after: success, error, or empty.**
-> **An SDE-2 does not just handle the happy path. They mentally picture every state the UI**
-> **can be in and make sure each one is designed, not an afterthought.**
+## Mental Model
 
-From "intent → flight → result" you learn: the four states (loading, empty, error, data),
-optimistic updates for perceived speed, undo for error recovery, retry for temporary failures,
-and skeleton screens over spinners.
+Every user action has a lifecycle: INTENT, FLIGHT, RESULT. Intent is what the user sees before acting (skeleton, placeholder). Flight is what happens during the action (loading, optimistic UI, progress). Result is what the user sees after: success, error, or empty. Design for all three phases, not just the happy path.
 
----
-
-## Learning Objectives
-
-1. Apply the "intent → flight → result" framework to any UI action
-2. Design for all four states: loading, empty, error, data. Each needs its own UI treatment
-3. Handle double-submit, rapid clicks, and race conditions
-4. Design for offline, slow network, and partial failures
-5. Implement undo, retry, and optimistic update patterns
-6. Think about product edge cases before being asked
-
----
-
-## Key Mental Models
-
-- **The four states**: Every data-displaying component needs a designed state for
-  loading / empty / error / data. If you only coded the "data" state, you're half done.
-- **Optimistic UI > loading spinner > nothing.** Show the user what they'll get before
-  the server confirms. Revert gracefully on failure.
-- **Undo is better than confirmation.** Instead of "Are you sure?" show a toast with
-  "Deleted × Undo". Fewer clicks. Recoverable mistakes.
-- **Assume the network is unreliable.** Every request can fail, timeout, or return stale
-  data. Design for retry, backoff, and stale-while-revalidate.
-- **Assume the user is fast.** They double-click, spam Enter, navigate before the page
-  loads. Defend against their speed with debounce, disable, and idempotency.
-
----
-
-## 1. The Four States: Deep Dive
-
-Every component that displays data lives in exactly one of four states at any moment.
+## Visualization
 
 ```mermaid
 stateDiagram-v2
@@ -99,109 +60,36 @@ stateDiagram-v2
   end note
 ```
 
-### Loading state
+## Engine Simulation
 
-| State | What to show | Anti-pattern |
-|---|---|---|
-| Initial load | Skeleton screen matching layout | Full-page spinner |
-| Refetch | Keep old data + subtle indicator | Replace with spinner |
-| Pagination | Skeleton rows below existing | Full table reload |
-| Action (submit) | Button spinner, disable button | Nothing |
-| Lazy load | Skeleton card matching size | Jumping layout |
+Trace a user typing a search query through all phases:
 
-```jsx
-// Loading skeleton — matches the data layout 1:1
-function ContactTableSkeleton() {
-  return (
-    <div role="status" aria-label="Loading contacts">
-      <div className="h-10 bg-gray-200 rounded animate-pulse" />
-      {Array.from({ length: 5 }).map((_, i) => (
-        <div key={i} className="flex gap-4 p-4">
-          <div className="w-8 h-8 bg-gray-200 rounded-full animate-pulse" />
-          <div className="flex-1 h-4 bg-gray-200 rounded animate-pulse" />
-          <div className="w-24 h-4 bg-gray-200 rounded animate-pulse" />
-        </div>
-      ))}
-    </div>
-  );
-}
+1. **INTENT**: User sees an empty search bar with placeholder text. They start typing.
+2. **INTENT to FLIGHT**: Each keystroke triggers a debounced API call. The UI shows a loading shimmer below the search bar.
+3. **FLIGHT**: Request 1 goes out for "A". User types "AB". Request 2 goes out for "AB". A new AbortController cancels request 1.
+4. **FLIGHT to RESULT**: Request 2 returns successfully. The UI shows results.
+5. **RESULT (empty)**: If the query matches zero contacts, the UI shows an empty state: "No contacts match your search" with a clear-filter button.
+6. **RESULT (error)**: If the network fails, the UI shows an error message with a retry button.
+7. **RESULT (data)**: If results come back, the UI renders the list with a subtle indicator that results are fresh.
+
+```text
+Input: "A"     → Request 1 sent
+Input: "AB"    → Request 2 sent, Request 1 cancelled
+Network:       → Request 2 returns first (correct)
+               → Request 1 never returns (aborted)
+UI:            → Shows results for "AB"
 ```
 
-### Empty state
+What happens internally: The AbortController cancels the stale request at the network level. The browser never processes the response for request 1. Only request 2 can update UI state. This prevents the race condition where request 1 returns after request 2 and overwrites correct data with stale data.
 
-| Scenario | What to show | Action |
-|---|---|---|
-| No items yet | Illustration + message | CTA to create first |
-| No search results | "No results for X" | Clear filter button |
-| No notifications | Bell icon + "All caught up" | None |
-| Empty after filter | "No items match your filters" | Reset filters |
+## Internal Implementation
 
-```jsx
-function EmptyState({ title, description, action }) {
-  return (
-    <div className="flex flex-col items-center py-12" role="status">
-      <InboxIcon className="w-16 h-16 text-gray-400" />
-      <h3 className="mt-4 text-lg font-medium">{title}</h3>
-      <p className="mt-1 text-sm text-gray-500">{description}</p>
-      {action && (
-        <button className="mt-4 btn btn-primary" onClick={action.onClick}>
-          {action.label}
-        </button>
-      )}
-    </div>
-  );
-}
-```
+### Double-Submit Protection
 
-### Error state
-
-| Scenario | What to show | Recovery |
-|---|---|---|
-| Network failure | Message + retry button | Retry with exponential backoff |
-| Validation error | Inline error next to field | Fix and resubmit |
-| Server error (5xx) | "Something went wrong" | Retry / contact support |
-| Rate limited | "Too many requests" | Wait and retry |
-| Not found (404) | "This doesn't exist" | Go back / home |
-| Unauthorized | "Please log in" | Redirect to login |
+Three layers of protection, each handling a different failure mode:
 
 ```jsx
-function ErrorState({ error, onRetry }) {
-  return (
-    <div role="alert" className="flex flex-col items-center py-12">
-      <AlertTriangle className="w-12 h-12 text-red-500" />
-      <h3 className="mt-4 text-lg font-medium">Something went wrong</h3>
-      <p className="mt-1 text-sm text-gray-500">{error?.message}</p>
-      {onRetry && (
-        <button className="mt-4 btn btn-primary" onClick={onRetry}>
-          Try again
-        </button>
-      )}
-    </div>
-  );
-}
-```
-
-### Data state
-
-The happy path, but even here:
-
-- **Partial data**: Show what loaded, indicate what's still loading
-- **Stale data**: Show cached data + subtle indicator that it's refreshing
-- **Reordering/sorting**: Animate rows to new positions (layout animations)
-- **Real-time updates**: Notify user when new data arrives without disrupting (toast, badge)
-
----
-
-## 2. Double-Submit Protection
-
-### Problem
-
-User clicks "Save" twice quickly → two API calls → duplicate record or inconsistent state.
-
-### Solutions
-
-```javascript
-// 1. Disable button during submission
+// Layer 1: Button disable during submission
 function SaveButton({ onClick }) {
   const [submitting, setSubmitting] = useState(false);
   const handleClick = async () => {
@@ -218,83 +106,38 @@ function SaveButton({ onClick }) {
     </Button>
   );
 }
+```
 
-// 2. Debounce the click
+What happens internally: The button disables itself synchronously on the first click. The `disabled` attribute prevents the browser from firing additional click events. Even if the user clicks 10 times before React re-renders, the native `disabled` attribute prevents multiple submissions.
+
+```js
+// Layer 2: Debounce
 const handleSave = debounce(onSave, 300, { leading: true, trailing: false });
+```
 
-// 3. Idempotency key in API
+What happens internally: The debounce with `leading: true` executes the first call immediately. All subsequent calls within 300ms are ignored. This prevents accidental double-clicks within a short window.
+
+```js
+// Layer 3: Idempotency key (API-side)
 fetch('/api/contacts', {
   method: 'POST',
   headers: { 'Idempotency-Key': generateUUID() },
 });
 ```
 
-### Interview answer (SDE-2)
+What happens internally: The server checks if it has already processed a request with this idempotency key. If yes, it returns the cached response instead of creating a duplicate record. This protects against network-level retries that the client cannot control.
 
-"Double-submit is prevented at three layers: the button shows loading and disables itself
-during the request; the API should be idempotent (same request twice = same result); and
-the UI should handle the response gracefully even if the second call succeeds with 'already
-exists.' I implement all three because the user might refresh and resubmit, or the network
-might retry the request automatically."
+### Race Condition Handling
 
----
-
-## 3. Race Conditions
-
-### Problem
-
-Search: user types "A" → request 1 → user types "AB" → request 2 → request 1 returns LAST
-→ UI shows results for "A" even though the last input was "AB".
-
-```mermaid
-flowchart TB
-  subgraph Input["User Typing"]
-    T["Type 'A'"] --> T2["Type 'AB'"]
-    T2 --> T3["Done typing"]
-  end
-
-  subgraph Requests["Request Timeline"]
-    R1["🟦 Request for 'A'"] -->|"⏱️ Slow... (2s)"| Late["Returns LATE"]
-    R2["🟥 Request for 'AB'"] -->|"⚡ Fast (500ms)"| Early["Returns FIRST"]
-  end
-
-  subgraph WithoutFix["❌ Without Race Fix"]
-    Early --> ShowsAB["✅ UI = 'AB' (correct)"]
-    Late --> ShowsA["❌ UI = 'A' (wrong!)<br/>Old data overwrites new"]
-  end
-
-  subgraph WithFix["✅ With AbortController"]
-    R2 --> F1["Create new controller"]
-    F1 --> F2["controller.abort()<br/>cancels request 1"]
-    F2 --> F3["Only request 2<br/>can update UI"]
-    F3 --> F4["✅ UI = 'AB' always"]
-  end
-
-  T --> R1
-  T2 --> R2
-
-  style WithoutFix fill:#fecaca,stroke:#ef4444
-  style WithFix fill:#dcfce7,stroke:#22c55e
-```
-
-### Solutions
-
-```javascript
-// 1. AbortController — cancel stale requests
+```jsx
+// AbortController cancels stale requests
 useEffect(() => {
   const controller = new AbortController();
   search(query, controller.signal).then(setResults).catch(ignoreAbort);
   return () => controller.abort();
 }, [query]);
 
-// 2. Request counter — ignore stale responses
-useEffect(() => {
-  let cancelled = false;
-  search(query).then(data => { if (!cancelled) setResults(data); });
-  return () => { cancelled = true; };
-}, [query]);
-
-// 3. TanStack Query — built-in dedup + cancellation
+// TanStack Query does this automatically
 useQuery({
   queryKey: ['search', query],
   queryFn: ({ signal }) => search(query, signal),
@@ -302,95 +145,89 @@ useQuery({
 });
 ```
 
-### Interview answer (SDE-2)
+What happens internally: When `query` changes, the cleanup function runs and calls `controller.abort()`. This cancels the in-flight fetch request. The browser discards the response. Only the new query's request can update state. TanStack Query builds this into its query key system: when the key changes, the old query is cancelled and the new one begins.
 
-"Race conditions happen when async operations complete out of order. The fix is to ensure
-only the LATEST request can update state. AbortController is preferred because it actually
-cancels the network request instead of ignoring its response. TanStack Query handles this
-automatically. When the query key changes, the old request is cancelled and only the new
-one updates the cache."
+### Optimistic Updates
 
----
-
-## 4. Optimistic Updates
-
-```mermaid
-sequenceDiagram
-  actor User
-  participant UI as React Component
-  participant Cache as TanStack Cache
-  participant Server as API Server
-
-  User->>UI: Click Star
-  UI->>Cache: Optimistic update
-  Cache-->>UI: Show starred ✅ (instant)
-  UI->>Server: POST /api/star
-  Server-->>UI: 200 OK
-
-  alt Server Error
-    Server-->>UI: 500 Error
-    UI->>Cache: Rollback to previous state
-    UI->>User: Show error toast
-    Cache-->>UI: Restore unstarred ⬜
-  end
-```
-
-### Problem
-
-User clicks "Star" on an email. Waiting for server confirmation before showing the star
-creates 200-500ms of perceived lag.
-
-### Solution
-
-```javascript
-// TanStack Query — optimistic update
+```jsx
 const mutation = useMutation({
   mutationFn: (id) => fetch(`/api/contacts/${id}/star`, { method: 'POST' }),
   onMutate: async (id) => {
-    // 1. Cancel outgoing refetches
     await queryClient.cancelQueries({ queryKey: ['contacts'] });
-    // 2. Snapshot previous value
     const previous = queryClient.getQueryData(['contacts']);
-    // 3. Optimistically update the cache
     queryClient.setQueryData(['contacts'], old =>
       old.map(c => c.id === id ? { ...c, starred: !c.starred } : c)
     );
     return { previous };
   },
   onError: (err, id, context) => {
-    // 4. Rollback on error
     queryClient.setQueryData(['contacts'], context.previous);
     toast.error('Failed to update star');
   },
   onSettled: () => {
-    // 5. Refetch to ensure server sync
     queryClient.invalidateQueries({ queryKey: ['contacts'] });
   },
 });
 ```
 
-### Interview answer (SDE-2)
+What happens internally: On mutate, the cache is updated immediately (optimistic). The UI shows the starred state instantly. When the server responds with success, nothing changes (cache is already correct). When the server errors, `onError` restores the snapshot taken in `onMutate`. The UI reverts to the unstarred state and shows an error toast. The `onSettled` always runs and invalidates the query to ensure eventual consistency with the server.
 
-"Optimistic updates show the expected result immediately before the server confirms. If the
-server fails, we ROLL BACK to the previous state and show an error toast. This pattern makes
-the UI feel instant. The user sees the star fill immediately and only notices if something
-goes wrong. TanStack Query's `onMutate`, `onError`, and `onSettled` lifecycle makes this
-structured and predictable."
+### Undo Pattern
 
----
+Undo replaces confirmation dialogs for destructive actions. Instead of "Are you sure?", perform the action immediately and give the user 5 seconds to undo.
 
-## 5. Offline & Network Resilience
-
-### Patterns
-
-```text
-Online → Normal operation
-Offline → Show cached data + "You're offline" banner → Queue mutations
-Reconnect → Flush queue → Sync data → Remove banner
+```jsx
+function useUndo(action) {
+  const execute = useCallback(async (...args) => {
+    await action(...args);
+    const undo = toast('Deleted', {
+      action: {
+        label: 'Undo',
+        onClick: async () => {
+          await undoAction(...args);
+          toast.dismiss(undo);
+        },
+      },
+      duration: 5000,
+    });
+  }, [action]);
+  return execute;
+}
 ```
 
-```javascript
-// Listen for offline/online
+What happens internally: The action executes immediately (e.g., delete contact). The UI shows the result with a toast containing an Undo button. If the user clicks Undo within 5 seconds, the reverse action runs (e.g., restore contact). After 5 seconds, the toast auto-dismisses and the action is permanent. The undo action must be idempotent: clicking Undo twice does nothing on the second click.
+
+### Retry with Exponential Backoff
+
+```js
+async function fetchWithRetry(url, options = {}, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      if (error.status >= 400 && error.status < 500) throw error;
+      await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+    }
+  }
+}
+```
+
+What happens internally: The retry loop waits 1s, then 2s, then 4s between attempts (exponential backoff). Client errors (4xx) are not retried because they are the client's fault and retrying will produce the same result. Network errors and server errors (5xx) are retried because they may be transient. TanStack Query has this built in with `retry` and `retryDelay` options.
+
+```js
+// TanStack Query built-in
+useQuery({
+  queryKey: ['contacts'],
+  queryFn: fetchContacts,
+  retry: 3,
+  retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
+});
+```
+
+### Offline & Network Resilience
+
+```jsx
 const [isOnline, setIsOnline] = useState(navigator.onLine);
 useEffect(() => {
   const goOffline = () => setIsOnline(false);
@@ -406,159 +243,82 @@ useEffect(() => {
 // Show offline indicator
 {!isOnline && (
   <Banner variant="warning">
-    You're offline. Changes will sync when you reconnect.
+    You are offline. Changes will sync when you reconnect.
   </Banner>
 )}
 ```
 
-### Network quality
+What happens internally: The `navigator.onLine` property reflects the browser's connectivity state. The `offline` and `online` events fire when the network status changes. When offline, cached data displays with an offline banner. Mutations are queued locally. When the `online` event fires, the queue flushes and data syncs.
 
-```javascript
-// Detect slow network via Network Information API
-const connection = navigator.connection;
-if (connection) {
-  if (connection.effectiveType === 'slow-2g' || connection.effectiveType === '2g') {
-    // Serve lower-resolution images, fewer results per page
-  }
-  connection.addEventListener('change', () => { /* re-evaluate */ });
-}
+## Real World Example
+
+### Contacts Page with All Edge Cases
+
+A production contacts listing page with search, filter, sort, pagination, and bulk actions.
+
+```text
+User intent:
+  "I want to find customer X and send them an email."
+
+INTENT:
+  User sees search bar with placeholder, filter pills, table with skeleton rows.
+
+FLIGHT:
+  - User types query. Debounce fires. Loading shimmer appears below search bar.
+  - Results update. User checks a checkbox. UI shows selection count.
+  - User clicks "Delete Selected". Button shows spinner. Toast appears:
+    "Deleted 3 contacts - Undo (5s)"
+  - If network fails mid-delete, button re-enables and error banner appears.
+  - If user goes offline, cached data displays with "You are offline" banner.
+    Mutations queue locally. They flush when connection returns.
+
+RESULT:
+  Success: Table updates with new data. Toast shows success.
+  Error: Error banner with retry button. Data reverts to pre-mutation state.
+  Empty after filter: "No contacts match your search" with clear-filter button.
+  Offline: Cached data with offline banner. Queue indicator: "2 changes pending".
+
+Edge cases handled:
+  - User searches while on page 3: results reset to page 1
+  - User selects contacts across pages: selection persists by ID, not index
+  - User deletes a contact someone else already deleted: 404 handled gracefully
+  - User has 500K contacts: server-side pagination + virtual scroll
+  - User double-clicks "Delete" on a row: button disables after first click
+  - User tabs away and back: stale data refetches in background
+  - User opens in two tabs: TanStack Query deduplicates requests
 ```
 
----
+### Loading Sequences and Perceived Performance
 
-## 6. Undo Pattern
+How users perceive time and what feedback to give:
 
-### Problem
-
-User deletes a contact. "Are you sure?" dialog slows them down. If they click Yes, it's
-gone forever.
-
-### Better: toast with undo
-
-```javascript
-function useUndo(action) {
-  const execute = useCallback(async (...args) => {
-    // Execute the action
-    await action(...args);
-    // Show toast with undo
-    const undo = toast('Deleted', {
-      action: {
-        label: 'Undo',
-        onClick: async () => {
-          await undoAction(...args);
-          toast.dismiss(undo);
-        },
-      },
-      duration: 5000, // 5 seconds to undo
-    });
-  }, [action]);
-  return execute;
-}
-```
-
-### Where undo applies
-
-| Action | Undo behavior |
-|---|---|
-| Delete item | Restore item, show toast for 5s |
-| Archive | Unarchive |
-| Mark as read | Mark as unread |
-| Change status | Revert to previous status |
-| Move to folder | Move back |
-
-### SDE-2 answer
-
-"Undo replaces confirmation dialogs for destructive actions. Instead of 'Are you sure?'
-(which trains users to click through without reading), we perform the action immediately
-and show a toast with an Undo button for 5 seconds. This is faster for the user and less
-disruptive. The undo action must be idempotent. If the user clicks Undo twice, the second
-click should do nothing."
-
----
-
-## 7. Retry & Backoff Patterns
-
-### Automatic retry with exponential backoff
-
-```javascript
-async function fetchWithRetry(url, options = {}, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await fetch(url, options);
-    } catch (error) {
-      if (i === retries - 1) throw error;
-      // Don't retry 4xx errors — they're client mistakes
-      if (error.status >= 400 && error.status < 500) throw error;
-      // Wait: 1s, 2s, 4s
-      await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
-    }
-  }
-}
-
-// TanStack Query has this built in
-useQuery({
-  queryKey: ['contacts'],
-  queryFn: fetchContacts,
-  retry: 3,
-  retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
-});
-```
-
-### Error types: what to retry
-
-| Error | Retry? | Strategy |
-|---|---|---|
-| Network failure | Yes | Exponential backoff |
-| 429 Rate limited | Yes | Use Retry-After header |
-| 500 Server error | Yes | 1-3 retries with backoff |
-| 401 Unauthorized | No | Redirect to login |
-| 403 Forbidden | No | Show permission error |
-| 404 Not found | No | Show not found |
-| 400 Bad request | No | Fix client-side validation |
-| 422 Validation | No | Show validation errors |
-| Timeout | Yes | Increase timeout, retry |
-
----
-
-## 8. Loading Sequences & Perceived Performance
-
-### How users perceive time
-
-```
+```text
 0-100ms    → Instant. No feedback needed.
 100-300ms  → Noticeable. Show subtle indicator (skeleton, not spinner)
 300-1000ms → Feel the delay. Show skeleton + progress indicator
 1s+        → User may leave. Show skeleton + estimated time + meaningful action
 3s+        → User is likely to leave. Show progress + ability to cancel
-```
 
-### Optimistic patterns
-
-```text
 Instant:     Optimistic UI (update cache immediately)
 Fast (100ms): Skeleton screen (layout-shape placeholders)
 Slow (1s+):   Spinner + progress + "This may take a moment"
 Failed:       Error message + retry + undo
 ```
 
----
+### Data Freshness and Staleness
 
-## 9. Data Freshness & Staleness
+TanStack Query stale-while-revalidate pattern:
 
-### TanStack Query stale-while-revalidate
-
-```javascript
+```js
 const query = useQuery({
   queryKey: ['contacts'],
   queryFn: fetchContacts,
-  staleTime: 30_000,      // Data is fresh for 30s — no refetch
-  gcTime: 5 * 60_000,    // Keep in cache for 5 min after unmount
+  staleTime: 30_000,         // Data is fresh for 30s - no refetch
+  gcTime: 5 * 60_000,       // Keep in cache for 5 min after unmount
   refetchOnWindowFocus: true, // Refetch on tab switch
   refetchInterval: 60_000,    // Poll every 60s for real-time feel
 });
 ```
-
-### Stale indicator
 
 ```jsx
 // Show user that data is being refreshed
@@ -572,99 +332,67 @@ const query = useQuery({
 </div>
 ```
 
----
+## Tradeoffs
 
-## 10. Edge Cases Checklist
+| Decision | Gain | Cost |
+|----------|------|------|
+| Optimistic update | Instant UI feel | Rollback complexity |
+| Undo instead of confirm | Faster UX | Must support idempotent undo |
+| Skeleton over spinner | Less layout jump | More code per component |
+| AbortController | No stale data | Requires cleanup in effects |
+| Exponential backoff | Resilient to spikes | Delays under heavy load |
 
-Before shipping any feature, run this mental checklist:
+The optimistic vs pessimistic tradeoff is the most important. Optimistic makes the UI feel fast but requires careful rollback logic. Pessimistic is safer but feels slower. Choose based on action criticality: toggle a star (optimistic) vs submit a payment (pessimistic).
 
-### Input edge cases
+## Common Mistakes
 
-- [ ] Empty input: what happens when the user submits nothing?
-- [ ] Very long input: does it break the layout?
-- [ ] Special characters: XSS, SQL injection, unicode, emoji
-- [ ] Rapid input: keystroke-level speed, paste, autocorrect
+- **Only coding the data state**: No loading, empty, or error states. Component shows blank space when there is no data.
+- **No double-submit protection**: User clicks Save twice, creates duplicate records.
+- **No race condition handling**: Old search results overwrite new results.
+- **No offline handling**: App shows error instead of cached data when offline.
+- **Confirmation dialogs instead of undo**: "Are you sure?" slows users down and trains them to click through without reading.
+- **No retry for transient failures**: Network blip results in permanent error state.
+- **No idempotency**: Re-submitting the same action creates duplicates.
+- **Full-page spinner instead of skeleton**: Content jumps when data loads, causing layout shift.
 
-### Network edge cases
+## SDE-2 Interview Answer
 
-- [ ] Offline: what does the user see?
-- [ ] Slow network: loading state, no layout jump
-- [ ] Timeout: retry? error message? partial data?
-- [ ] Race condition: request 1 returns after request 2
-- [ ] Duplicate request: double-submit, double-mutation
+### Mid-level
 
-### Data edge cases
+"I design every data component for four states: loading, empty, error, and data. Loading uses skeletons that match the data layout. Empty shows a message with a call to action. Error shows the error message with a retry button. Data renders the actual content. I also handle double-submit by disabling buttons during submission, and I use AbortController to prevent race conditions in search."
 
-- [ ] Empty data: appropriate empty state with action
-- [ ] Single item: does the layout collapse?
-- [ ] Many items: virtualization, pagination
-- [ ] Very large values: truncation, overflow handling
-- [ ] Missing fields: null/undefined checks
+### Senior
 
-### Interaction edge cases
+"I use the INTENT, FLIGHT, RESULT framework for every user action. Intent: what does the user see before acting? Flight: what happens during the action? Result: what does the user see after? I implement optimistic updates for instant UI feel, with rollback and error toasts for failures. I use undo instead of confirmation dialogs. I set up TanStack Query with stale time, retry, and background refetching. I review every feature for edge cases using a checklist before shipping."
 
-- [ ] Double-click: button disable, idempotency
-- [ ] Rapid scroll: lazy loading, virtual list
-- [ ] Tab away and back: refetch stale data
-- [ ] Browser back/forward: URL state, scroll position
-- [ ] Multiple tabs: stale data, conflict resolution
+### Engineering Lead
 
-### Accessibility edge cases
+"I enforce a product thinking standard on the team. Every feature must pass the edge case checklist before shipping: input edge cases, network edge cases, data edge cases, interaction edge cases, and accessibility edge cases. I define the state machine pattern for data components (loading, empty, error, data) and require it in code review. I measure edge case handling by monitoring production errors: if an error state was not designed, it means our checklist failed."
 
-- [ ] Screen reader: roles, aria labels, live regions
-- [ ] Keyboard only: all interactions via keyboard
-- [ ] Zoomed in (200%): no horizontal scroll
-- [ ] Reduced motion: respect prefers-reduced-motion
-- [ ] High contrast: color not the only differentiator
+## Follow-up Questions
 
----
+1. Design a file upload component with drag-and-drop. Walk through all edge cases: network failure during upload, file too large, wrong file type, duplicate filename, upload cancellation.
+2. Your app shows stale data after a user reconnects from offline. How do you ensure the UI reflects the latest server state without losing local changes?
+3. A notification bell polls every 30 seconds. The user is on a slow connection and requests start queuing. How do you prevent the queue from growing indefinitely?
+4. Design an undo system for a drag-and-drop reorderable list. What state do you capture for rollback? How long does undo stay available?
+5. Your team ships a feature that works perfectly in testing but gets error reports in production. The errors are all "Something went wrong" with no context. How do you improve error handling to capture useful information?
 
-## 11. Real-World Example: a product company Contacts Page
+## Mental Trigger
 
-### Prompt
+"Four states."
 
-"Design a contacts listing page with search, filter, sort, pagination, and bulk actions."
+## One Page Revision
 
-### Product thinking walkthrough
-
-```
-User intent:
-  "I want to find customer X and send them an email."
-
-Phases:
-  INTENT:     Sees search bar, filter pills, table skeleton
-  FLIGHT:     Types query → debounced → loading shimmer → results
-              Clicks "Select all" → optimistic check all
-              Clicks "Delete" → toast "Deleted 3 contacts · Undo" (5s)
-  RESULT:     Success → new data displayed
-              Error → error banner with retry
-              Empty → "No contacts match your search" + clear filter
-              Offline → cached data + "You're offline" banner
-
-Edge cases:
-  - User searches while 3rd page is loaded → reset to page 1
-  - User selects across pages → selection persists (store IDs, not indexes)
-  - User clicks "Delete" on a contact that was just deleted by someone else
-    → handle 404 gracefully, remove from list
-  - User has 500K contacts → server-side pagination, virtual scroll
-```
-
----
-
-## Summary
-
-> **Product thinking = simulate every state before writing code. Ask "what if?" for every**
-> **user action: what if the network fails, what if the user double-clicks, what if there**
-> **are no results, what if the data is huge, what if the user is offline. An SDE-2 is**
-> **someone who answers these questions BEFORE they're asked, not after bugs are filed.**
-
----
-
-## Homework
-
-1. Audit a real app page for all four states (loading, empty, error, data). Which are missing?
-2. Add undo to a delete action in a feature you've built
-3. Add optimistic update to a toggle action (star, like, pin)
-4. Test an app with DevTools offline mode. What breaks?
-5. Add race condition handling to a search component (AbortController)
-6. Write the product edge cases checklist for a "bulk email send" feature
+- Every user action: INTENT (before), FLIGHT (during), RESULT (after).
+- Every data component: loading (skeleton), empty (message + action), error (message + retry), data (content).
+- Double-submit: disable button, debounce click, idempotency key.
+- Race conditions: AbortController cancels stale requests.
+- Optimistic updates: update cache immediately, rollback on error.
+- Offline: show cached data + offline banner + queue mutations.
+- Undo replaces confirmation dialogs. 5-second window to revert.
+- Retry transient failures with exponential backoff. Do not retry 4xx errors.
+- Perceived performance: instant (optimistic), fast (skeleton), slow (spinner + progress), failed (error + retry).
+- TanStack Query: staleTime for freshness, gcTime for cache, retry for resilience, refetchOnWindowFocus for consistency.
+- Edge cases: input (empty, long, special chars), network (offline, slow, timeout, race), data (empty, single, many, large, missing), interaction (double-click, rapid scroll, tab away), accessibility (screen reader, keyboard, zoom, reduced motion).
+- Interview: Mid-level handles four states. Senior uses INTENT/FLIGHT/RESULT framework. Lead enforces team standards and edge case checklist.
+- Trigger: "Four states."
